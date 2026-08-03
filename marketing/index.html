@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open-Write — A drafting instrument for long-form storytelling</title>
+<meta name="description" content="Open-Write is an open-source instrument for designing long-form stories — screenplays, novels, and television. The architect drives; the tool holds the structure, checks it, and renders the draft. Free under Apache 2.0.">
+<!-- social -->
+<link rel="canonical" href="https://open-write-studio.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Open-Write">
+<meta property="og:title" content="Open-Write — A drafting instrument for long-form storytelling">
+<meta property="og:description" content="An open-source instrument for designing long-form stories. The architect drives; the tool holds the structure, checks it, and renders the draft. Free under Apache 2.0.">
+<meta property="og:url" content="https://open-write-studio.com/">
+<meta property="og:image" content="https://open-write-studio.com/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Open-Write — A drafting instrument for long-form storytelling">
+<meta name="twitter:description" content="An open-source instrument for designing long-form stories. The architect drives; the tool holds the structure, checks it, and renders the draft.">
+<meta name="twitter:image" content="https://open-write-studio.com/og-image.png">
+<!-- /social -->
+<link rel="icon" href="Logo-square.jpg">
+<link rel="stylesheet" href="open-write.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="container">
+    <div class="logo-container">
+      <img src="Logo-banner.jpg" alt="Open-Write Logo" class="topbar-logo">
+      <span class="wordmark"><a href="index.html">Open-Write</a></span>
+    </div>
+    <nav>
+      <a href="#system">How it works</a>
+      <a href="#work">The work</a>
+      <a href="moloch.html">Moloch</a>
+      <a href="#questions">Honest questions</a>
+      <a href="#hire">Work with me</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="open-write-studio.html">Studio</a>
+      <a href="/studio/">Studio Online</a>
+      <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<section class="hero">
+  <div class="container">
+    <img src="Logo-banner.jpg" alt="Open-Write Logo" class="hero-logo">
+    <div class="eyebrow">An open-source instrument for narrative</div>
+    <h1>You are the architect.<br><em>This is your drafting table.</em></h1>
+    <p class="lede">
+      Open-Write is a precision instrument for designing long-form stories — screenplays, novels, television.
+      Like CAD for an architect or Blender for an animator, it holds the entire structure in view, checks it against itself across hundreds of pages, and renders your draft. The design, the judgment, the soul of the thing stay yours.
+    </p>
+    <p class="frame-note">
+      <strong>It is not a button you press to get a novel.</strong> It is a tool a craftsperson drives. An architect using CAD is still the architect; the instrument supplies precision and throughput, never taste. What you make of it is up to you.
+    </p>
+    <p class="status"><span class="dot"></span> <em>Moloch</em> is live &middot; Open-Write&nbsp;Studio&nbsp;beta is live &middot; Open-Write&nbsp;on&nbsp;GitHub</p>
+    <div class="cta-row">
+      <a class="btn" href="a-thousand-silences.html">Read what it drafted</a>
+      <a class="btn secondary" href="#system">See how it works</a>
+    </div>
+  </div>
+</section>
+
+<section id="system">
+  <div class="container">
+    <div class="eyebrow">How it works</div>
+    <h2>Stations on the drafting table.</h2>
+    <p class="section-intro">
+      Long-form coherence was never a model problem — it's a scaffolding problem. Open-Write organizes standard, general-purpose AI models into specialized roles and supports them with structured state, so the work holds together across the full arc of a season, a novel, or a screenplay. You move scene by scene through the same stations a real production would.
+    </p>
+    <p class="section-intro" style="margin-bottom: 2.5rem;">
+      Open-Write is available in two forms. The <strong>open-source pipeline</strong> runs in Visual Studio Code or Kilo Code — fully customizable, for developers and power users who want to modify every station. <strong>Open-Write Studio</strong> is a standalone Windows&nbsp;11 application with a native installer — the same pipeline, packaged for writers who want the capability without the setup. Both are free.
+    </p>
+
+    <div class="pipeline">
+      <div class="pipeline-flow">
+        <div class="stage"><div class="step">01</div><div class="name">Bible</div><div class="desc">World, characters, outline, voice rules — you fill this in</div></div>
+        <div class="stage"><div class="step">02</div><div class="name">Architect</div><div class="desc">Plans the scene without writing it</div></div>
+        <div class="stage"><div class="step">03</div><div class="name">Writer</div><div class="desc">Drafts to format without planning</div></div>
+        <div class="stage"><div class="step">04</div><div class="name">Critics</div><div class="desc">Voice, palette, continuity, naturalism</div></div>
+        <div class="stage"><div class="step">05</div><div class="name">Cutter</div><div class="desc">Compresses without restructuring</div></div>
+        <div class="stage"><div class="step">06</div><div class="name">Reader</div><div class="desc">Reads cold, like a contest judge</div></div>
+      </div>
+    </div>
+
+    <p class="section-intro" style="margin-top: 3rem; margin-bottom: 0;">
+      Three templates ship with the public release — film screenplay, novel, and episodic television — each self-contained, with its own bible structure, mode definitions, and export tools. A state server holds the things a writer loses track of across three hundred pages: who knows what and when, which plants have paid off, what the audience believes, where each scene sits on the clock. And because same-model critics share blind spots, evaluation runs across more than one model and takes the union of what they flag — the way you'd never have a draft proofread only by its own author.
+    </p>
+
+    <div class="callout">
+      <div class="label">The honest version of the impressive part</div>
+      <p>Yes — you can hand it a premise and it will draft the whole structure. <em>A Thousand Silences</em> was made that way, from a single prompt, with iterative pipeline tuning and zero editorial intervention. But be clear about what comes back: a <em>buildable draft</em> — the developed structure, not the finished, consecrated building. It is the cathedral roughed in, not the cathedral made worth standing in.</p>
+      <p>Closing that gap — the judgment about what the story should feel like, the taste that separates a draft from a thing worth reading — is still the architect's work. The instrument supplies throughput. It does not supply that.</p>
+    </div>
+  </div>
+</section>
+
+<section id="work">
+  <div class="container">
+    <div class="eyebrow">The work it produced</div>
+    <h2>Built by making real things. <em>Not by describing a capability.</em></h2>
+    <p class="section-intro">
+      Four completed projects are released alongside the system as evidence of what it can do in skilled hands.
+      <em>A Thousand Silences</em> and <em>Moloch: The Optimization Trap</em> are readable in full now; excerpts of the others are posted.
+    </p>
+
+    <div class="works">
+
+      <article class="work">
+        <div class="kind">Literary novel</div>
+        <h3>A Thousand Silences</h3>
+        <p>A novel of the Haitian Revolution, following a French translator who slowly recognizes that the precision of his work is what makes him complicit. Drafted from a single prompt — a setting, a historical source, a literary inspiration — with iterative pipeline tuning and zero editorial intervention.</p>
+        <ul class="stats">
+          <li><span class="label">Length</span><span class="value">52,000 words</span></li>
+          <li><span class="label">Chapters</span><span class="value">30</span></li>
+          <li><span class="label">Inputs</span><span class="value">One prompt</span></li>
+          <li><span class="label">Released</span><span class="value">Public domain</span></li>
+        </ul>
+        <p class="verdict">Readable in full, free, today.</p>
+        <a class="read-link" href="a-thousand-silences.html">Read all 30 chapters →</a>
+        <a class="read-link" href="downloads/A_Thousand_Silences.pdf" download>Download PDF</a>
+        <a class="read-link" href="downloads/A_Thousand_Silences.epub" download>EPUB</a>
+        <a class="read-link" href="downloads/A_Thousand_Silences.txt" download>TXT</a>
+      </article>
+
+      <article class="work">
+        <div class="kind">Screenplay &amp; novel</div>
+        <h3>QG <em>(working title)</em></h3>
+        <p>A hard-science metaphysical drama about a grief-frozen physicist contacted by the quantum-realm successors of all advanced life. Three completed forms — feature screenplay, novel, and an expanded screenplay covering the full Velai civilization in a parallel storyline.</p>
+        <ul class="stats">
+          <li><span class="label">Forms</span><span class="value">3 works, 1 story</span></li>
+          <li><span class="label">Screenplay</span><span class="value">61 pages</span></li>
+          <li><span class="label">Novel</span><span class="value">75,000 words</span></li>
+          <li><span class="label">Alt screenplay</span><span class="value">113 pages</span></li>
+        </ul>
+        <p class="verdict">RECOMMEND — from the system's own AI adversarial reader.</p>
+        <a class="read-link" href="qg-excerpt.html">Read an excerpt →</a>
+      </article>
+
+      <article class="work">
+        <div class="kind">Prestige television</div>
+        <h3>Ghosts of Pottawatomie Creek</h3>
+        <p>A four-season historical drama about John Brown and the Bleeding Kansas period. Spec scripts for all four seasons; three drafted in full, the fourth in development. A tragedy in the older sense, about the cost of conviction and the question of unpaid debt.</p>
+        <ul class="stats">
+          <li><span class="label">Format</span><span class="value">TV / four seasons</span></li>
+          <li><span class="label">Drafted</span><span class="value">~1,300 pages</span></li>
+          <li><span class="label">Time</span><span class="value">Two weeks</span></li>
+          <li><span class="label">Cost</span><span class="value">≈ $100 total compute</span></li>
+        </ul>
+        <p class="verdict">In development for studio submission.</p>
+        <a class="read-link" href="gopc-excerpt.html">Read the Season 2 cold open →</a>
+      </article>
+
+      <article class="work">
+        <div class="kind">Dual-track &middot; essays &amp; fiction</div>
+        <h3>Moloch: <em>The Optimization Trap</em></h3>
+        <p>A structural argument about how self-reinforcing incentive systems drive harmful optimization across technology, governance, and media — told through alternating essays and fiction. Twenty-three chapters, footnoted and sourced. Produced by the Open-Write pipeline.</p>
+        <ul class="stats">
+          <li><span class="label">Length</span><span class="value">~57,000 words</span></li>
+          <li><span class="label">Chapters</span><span class="value">23</span></li>
+          <li><span class="label">Format</span><span class="value">Essays &amp; fiction</span></li>
+          <li><span class="label">Released</span><span class="value">Public domain</span></li>
+        </ul>
+        <p class="verdict">Available as PDF, EPUB, DOCX, and TXT.</p>
+        <a class="read-link" href="moloch.html">Read <em>Moloch</em> →</a>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<section id="questions">
+  <div class="container">
+    <div class="eyebrow">Honest questions</div>
+    <h2>The objections, answered straight.</h2>
+    <p class="section-intro">
+      If you have a problem with AI in creative work, you're not wrong to ask hard questions. Here are mine, answered the way I'd want them answered — without dodging the ones that don't have a clean answer.
+    </p>
+
+    <div class="qa">
+
+      <div class="qa-item">
+        <p class="q">Is this just slop? Did a machine make it?</p>
+        <p class="a">It was made by AI, yes — and the way to settle whether that makes it slop is to read it, not to argue about the tool. The instrument doesn't supply taste; the person driving it does. An architect working in CAD is still the architect, and no one calls a building drafted in CAD "not really architecture." Judge the building, not the pencil. <strong>So read the novel cold and decide for yourself.</strong></p>
+      </div>
+
+      <div class="qa-item">
+        <p class="q">Isn't this trained on writers' work, taken without consent?</p>
+        <p class="a">The models underneath are third-party, general-purpose, and pretrained — I didn't build or train them, and I won't pretend the question of how they were trained is settled, because it isn't. It's a real, unresolved fight, and I don't claim to have solved it.</p>
+        <p class="a">What I can answer for is what I built on top of them, and the choices that were actually mine: releasing the whole system openly instead of selling it, putting the demonstration works into the public domain, and being honest about who this costs rather than pretending it costs no one.</p>
+      </div>
+
+      <div class="qa-item">
+        <p class="q">Won't this put writers out of work?</p>
+        <p class="a">It will pressure specific roles — developmental work, spec work, junior story roles especially — and I won't pretend otherwise. But the capability is arriving whether or not I build my version of it. What I could control was whether it lands in everyone's hands or only in the hands of whoever can pay the most for it. I chose the first. The people in the exposed roles deserve honesty and a head start, not reassurance that nothing is changing.</p>
+      </div>
+
+      <div class="qa-item">
+        <p class="q">Then what's left for the writer?</p>
+        <p class="a">Everything the instrument can't supply: the judgment about what a story should feel like, the taste that separates a buildable draft from a finished one, the conviction underneath the whole thing. The tool rewards the people who bring those. That's why I hold a few components back from the public release — so the floor doesn't fall to where pure button-pushing clears it. The throughput is free. The judgment is still yours, and still rare.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="hire">
+  <div class="container">
+    <div class="eyebrow">Work with me</div>
+    <h2>If you have a cathedral in mind but can't run the CAD.</h2>
+
+    <div class="position-text" style="margin-bottom: 3rem;">
+      <p>I'm Nicholas Detweiler — a writer and systems builder. I finished reading a novel I had not written. I'd asked a system of AI agents I built to produce one from three pieces of direction: the Haitian Revolution as setting, Laurent Dubois's history as a source, <em>Hamlet</em> as an inspiration rather than a template. What came back changed what I thought was coming for this work.</p>
+
+      <p>It turned out the problem wasn't the model. It was the scaffolding. With the right division of labor and the right structure underneath them, ordinary models can carry an entire novel. I open-sourced it. I kept a small set of components private, not to gatekeep, but because releasing them would drop the floor far enough to flood the field with work that passes a glance and means nothing — which helps no one and hurts the working artists this is meant to serve.</p>
+
+      <p>The system is free; anyone can learn to drive it. But if you'd rather hand the drafting to someone who built the instrument — and who brings the components that aren't in the public release — that's what I do.</p>
+
+      <p style="margin-top: 1.5rem;">
+        <a href="essay-warning-shot.html" style="text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.875rem;">Read the essays →</a>
+      </p>
+    </div>
+
+    <div class="paths">
+      <div class="path">
+        <h3>Adaptation &amp; development</h3>
+        <p class="lead">Have a manuscript you want developed into a screenplay, a story you want carried to a full draft, a season you need built out? I take it through the full pipeline and bring the judgment and the private components the public tool doesn't include.</p>
+        <span class="scope">Fixed scope · fixed deliverable · by project</span>
+      </div>
+      <div class="path">
+        <h3>Learn to drive it</h3>
+        <p class="lead">A workshop for writers and small studios who want to use the instrument themselves — bible to finished draft, the parts that don't come through in documentation. Built for people, not engineers.</p>
+        <span class="scope">Cohort workshop · in development</span>
+      </div>
+      <div class="path">
+        <h3>For studios &amp; publishers</h3>
+        <p class="lead">If you're a production company or press thinking seriously about AI-assisted development as part of a real pipeline — not a gimmick — I consult on building it well, with quality control at every station.</p>
+        <span class="scope">Engagement · by conversation</span>
+      </div>
+    </div>
+
+    <p class="section-intro" style="margin-top: 2.5rem; margin-bottom: 0;">
+      <a href="mailto:open.write.studio@gmail.com?subject=Working%20with%20you%20%E2%80%94%20Open-Write" style="text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.875rem;">Start a conversation →</a>
+    </p>
+  </div>
+</section>
+
+<section class="support-band">
+  <div class="container">
+    <div class="support-inner">
+      <div class="eyebrow">Support the work</div>
+      <h2>Free, and staying that way.</h2>
+      <p>Open-Write is open-source and the demonstration works are in the public domain — no paywall, now or later. I built it on two months away from regular work. If it was worth something to you, you can put something in the jar. Entirely optional, always.</p>
+      <p style="margin-bottom: 1.5rem; font-size: 0.875rem; color: var(--muted);">The Open-Write Studio UI is built on a base provided by <strong style="color: var(--ink-soft); font-weight: 400;">Storythread&nbsp;Studio</strong> (<a href="https://ko-fi.com/storythreadstudio" target="_blank" rel="noopener">support&nbsp;them&nbsp;on&nbsp;Ko-fi</a>).</p>
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
+        <a class="btn secondary" href="https://ko-fi.com/nicholasdetweiler" target="_blank" rel="noopener" id="support-link">Support Open-Write</a>
+        <a class="btn secondary" href="https://ko-fi.com/storythreadstudio" target="_blank" rel="noopener">Support Storythread Studio</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="schedule">
+  <div class="container">
+    <div class="eyebrow">The release</div>
+    <h2>What's live, and what's coming.</h2>
+    <div class="schedule">
+
+      <div class="release is-live">
+        <div class="when"><span class="when-date">Now</span><span class="tag live">Live</span></div>
+        <div class="what">
+          <h3>The work, readable today</h3>
+          <ul class="items">
+            <li><a href="a-thousand-silences.html"><em>A Thousand Silences</em>, complete (52,000 words)</a></li>
+            <li><a href="essay-warning-shot.html">Essay one — <em>A Warning Shot</em></a></li>
+            <li><a href="essay-incentive-problem.html">Essay two — <em>The Incentive Problem</em></a></li>
+            <li><a href="essay-three.html">Essay three — <em>The Structural Solution</em></a></li>
+            <li><a href="essay-four.html">Coda — <em>Designing for the Creature We Actually Are</em></a></li>
+            <li><a href="qg-excerpt.html">QG excerpt</a> &middot; <a href="gopc-excerpt.html">Ghosts of Pottawatomie Creek, S2 cold open</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="release is-live">
+        <div class="when"><span class="when-date">June 1</span><span class="tag live">Repository</span></div>
+        <div class="what">
+          <h3>Open-Write on GitHub</h3>
+          <p>The full public pipeline — three templates, the Python toolchain, the state server, and the methodology docs — released under Apache&nbsp;2.0.</p>
+        </div>
+      </div>
+
+      <div class="release is-live">
+        <div class="when"><span class="when-date">June 15</span><span class="tag live">Essay</span></div>
+        <div class="what">
+          <h3>Essay two — <em>The Incentive Problem</em></h3>
+          <p>Why the danger in this transition is structural rather than individual, and why the right unit of analysis is the incentive structure, not the people inside it.</p>
+          <ul class="items">
+            <li><a href="essay-incentive-problem.html">Read <em>The Incentive Problem</em> →</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="release is-live">
+        <div class="when"><span class="when-date">June 29</span><span class="tag live">Essays</span></div>
+        <div class="what">
+          <h3>Essay three &amp; the coda</h3>
+          <p><em>The Structural Solution</em>, followed by the closing coda, <em>Designing for the Creature We Actually Are</em>.</p>
+          <ul class="items">
+            <li><a href="essay-three.html">Read <em>The Structural Solution</em> →</a></li>
+            <li><a href="essay-four.html">Read <em>Designing for the Creature We Actually Are</em> →</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="release is-live">
+        <div class="when"><span class="when-date">July 21</span><span class="tag live">New work</span></div>
+        <div class="what">
+          <h3><em>Moloch: The Optimization Trap</em></h3>
+          <p>A dual-track work — essays and fiction — arguing that the primary threat is not malicious individuals but self-reinforcing systems of perverse incentives. Readable in full, with free ebook downloads.</p>
+          <ul class="items">
+            <li><a href="moloch.html">Read <em>Moloch</em> →</a></li>
+            <li><a href="downloads/Moloch_Professional.pdf" download>Download PDF</a> &middot; <a href="downloads/Moloch.epub" download>EPUB</a> &middot; <a href="downloads/Moloch.docx" download>DOCX</a> &middot; <a href="downloads/Moloch.txt" download>TXT</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="release is-live">
+        <div class="when"><span class="when-date">July 27</span><span class="tag live">Standalone</span></div>
+        <div class="what">
+          <h3>Open-Write Studio <span style="font-size: 0.65em; color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em;">Beta</span></h3>
+          <p>The full Open-Write pipeline — templates, multi-agent workflow, state server — as a standalone Windows&nbsp;11 application. No VS&nbsp;Code or Kilo&nbsp;Code required. The open-source pipeline continues as the fully customizable version for developers and power users.</p>
+          <ul class="items">
+            <li><a href="open-write-studio.html">Learn more &amp; download →</a></li>
+            <li><a href="downloads/Open-Write_1.0.5_x64-setup.exe" download>Download installer (27&nbsp;MB)</a> &middot; <a href="downloads/Open-Write_1.0.5_x64_en-US.msi" download>MSI (29&nbsp;MB)</a></li>
+            <li style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted);">This is a beta release. Bugs can be reported at <a href="https://github.com/Open-Write/open-write-studio/issues" target="_blank" rel="noopener">the GitHub repo</a>.</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="studio-online">
+  <div class="container">
+    <div class="eyebrow">Use it online</div>
+    <h2>Open-Write Studio, in your browser.</h2>
+    <p class="section-intro">
+      No installer required. Run the full Open-Write pipeline directly in your browser — Bible generation through final editorial pass — using your own AI provider keys. Free and open-source, like everything else here.
+    </p>
+    <div class="paths">
+      <div class="path">
+        <h3>Your API keys, your models</h3>
+        <p class="lead">Bring your own keys from OpenRouter, OpenAI, Anthropic, MiMo, GLM, or any OpenAI-compatible provider. Nothing is stored except what you put in.</p>
+        <span class="scope">OpenRouter · OpenAI · Anthropic · MiMo · GLM · and more</span>
+      </div>
+      <div class="path">
+        <h3>The full pipeline, online</h3>
+        <p class="lead">Bible, Architect, Writer, Critics, Cutter, Reader — every station runs in the cloud through your browser. Works on any device, no setup required.</p>
+        <span class="scope">All templates · Version history · Export to ZIP</span>
+      </div>
+      <div class="path">
+        <h3>Open-source &amp; free</h3>
+        <p class="lead">The web studio is open-source and free to use. Your projects live on the server while you work, and you can export everything to your computer at any time.</p>
+        <span class="scope">Apache 2.0 · No subscription · No paywall</span>
+      </div>
+    </div>
+    <div style="margin-top: 3rem; text-align: center;">
+      <a class="btn" href="/studio/">Launch Studio Online →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="colophon">
+      <strong>Open-Write</strong> released under the Apache 2.0 license, developed and maintained by <a href="#hire">Nicholas Detweiler</a>.
+      The works released alongside it — <em>A Thousand Silences</em>, <em>QG</em>, <em>Ghosts of Pottawatomie Creek</em>, and <em>Moloch: The Optimization Trap</em> — are case studies in what the instrument produces in skilled hands.
+      <div class="small-print">Open-Write is the open-source foundation. A small set of proprietary components used in the author's own production is not part of the public release. Evaluation verdicts shown are from the system's own AI adversarial readers, not human professional coverage.</div>
+    </div>
+    <div class="links">
+      <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Open-Write/open-write-studio" target="_blank" rel="noopener">Studio</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://ko-fi.com/nicholasdetweiler" target="_blank" rel="noopener" id="support-link-footer">Support</a>
+      <a href="mailto:open.write.studio@gmail.com">Contact</a>
+      <a href="mailto:open.write.studio@gmail.com?subject=Press%20inquiry%20%E2%80%94%20Open-Write">Press</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Downloads — Open-Write</title>
+<meta name="description" content="Download Open-Write Studio for Windows, access the open-source Open-Write pipeline on GitHub, and get free ebooks of A Thousand Silences and Moloch: The Optimization Trap.">
+<link rel="canonical" href="https://open-write-studio.com/downloads.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Open-Write">
+<meta property="og:title" content="Downloads — Open-Write">
+<meta property="og:description" content="Software and media downloads from Open-Write.">
+<meta property="og:url" content="https://open-write-studio.com/downloads.html">
+<meta property="og:image" content="https://open-write-studio.com/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Downloads — Open-Write">
+<meta name="twitter:description" content="Software and media downloads from Open-Write.">
+<meta name="twitter:image" content="https://open-write-studio.com/og-image.png">
+<link rel="icon" href="Logo-square.jpg">
+<link rel="stylesheet" href="open-write.css">
+<style>
+.dl-hero {
+    padding: 5rem 0 4rem;
+    border-bottom: 1px solid var(--rule);
+    text-align: center;
+}
+.dl-hero .container { max-width: 44rem; }
+.dl-hero h1 {
+    font-size: clamp(2rem, 4vw, 3rem); line-height: 1.1; margin: 0 0 1rem;
+    font-weight: 400; letter-spacing: -0.01em;
+}
+.dl-hero .deck {
+    color: var(--ink-soft); font-size: 1.0625rem; line-height: 1.6;
+    margin: 0; max-width: 36rem;
+}
+.dl-section {
+    padding: 4rem 0;
+    border-bottom: 1px solid var(--rule);
+}
+.dl-section .container { max-width: 52rem; }
+.dl-section > .container > .eyebrow { margin-bottom: 0.5rem; }
+.dl-section > .container > h2 { margin-bottom: 2.5rem; }
+.dl-cards {
+    display: grid; grid-template-columns: 1fr; gap: 2.5rem;
+}
+@media (min-width: 56rem) { .dl-cards { grid-template-columns: 1fr 1fr; gap: 2rem; } }
+.dl-card {
+    border: 1px solid var(--rule);
+    background: var(--bg-elev);
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+}
+.dl-card .card-kind {
+    text-transform: uppercase; letter-spacing: 0.15em; font-size: 0.7rem;
+    color: var(--accent); margin-bottom: 0.75rem;
+}
+.dl-card h3 {
+    font-size: 1.375rem; margin: 0 0 0.75rem; font-weight: 400;
+}
+.dl-card h3 em { font-style: italic; }
+.dl-card h3 .tag {
+    font-size: 0.6em; color: var(--accent); text-transform: uppercase;
+    letter-spacing: 0.1em; vertical-align: middle; margin-left: 0.5rem;
+}
+.dl-card .card-desc {
+    color: var(--ink-soft); font-size: 0.9375rem; line-height: 1.55;
+    margin: 0 0 1.5rem; flex: 1;
+}
+.dl-card .card-buttons {
+    display: flex; gap: 0.75rem; flex-wrap: wrap;
+    border-top: 1px solid var(--rule); padding-top: 1.25rem;
+}
+.dl-card .card-buttons .btn {
+    padding: 0.65rem 1.25rem; font-size: 0.8rem;
+}
+.dl-card .card-note {
+    margin-top: 1rem; font-size: 0.8125rem; color: var(--muted); line-height: 1.5;
+}
+.dl-card .card-note a { color: var(--ink-soft); }
+.dl-card .card-meta {
+    margin-top: 0.75rem; font-size: 0.75rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="container">
+    <div class="logo-container">
+      <img src="Logo-banner.jpg" alt="Open-Write Logo" class="topbar-logo">
+      <span class="wordmark"><a href="index.html">Open-Write</a></span>
+    </div>
+    <nav>
+      <a href="index.html#system">How it works</a>
+      <a href="index.html#work">The work</a>
+      <a href="moloch.html">Moloch</a>
+      <a href="open-write-studio.html">Studio</a>
+      <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<div class="dl-hero">
+  <div class="container">
+    <div class="eyebrow">Downloads</div>
+    <h1>Software &amp; media.</h1>
+    <p class="deck">Everything available from Open-Write in one place — the standalone Studio application, the open-source pipeline, and the demonstration works as free ebooks.</p>
+  </div>
+</div>
+
+<section id="software" class="dl-section">
+  <div class="container">
+    <div class="eyebrow">Software</div>
+    <h2>The instruments.</h2>
+    <div class="dl-cards">
+
+      <div class="dl-card">
+        <div class="card-kind">Standalone application</div>
+        <h3>Open-Write Studio <span class="tag">Beta</span></h3>
+        <p class="card-desc">The full Open-Write pipeline as a standalone Windows&nbsp;11 application. No VS&nbsp;Code or Kilo&nbsp;Code required. Bundles the Python backend — no installation needed. Supports 22 LLM providers plus local inference via LM&nbsp;Studio and Ollama.</p>
+        <div class="card-buttons">
+          <a class="btn" href="downloads/Open-Write_1.0.5_x64-setup.exe" download>Installer (.exe) <span class="dl-size">27 MB</span></a>
+          <a class="btn" href="downloads/Open-Write_1.0.5_x64_en-US.msi" download>Installer (.msi) <span class="dl-size">29 MB</span></a>
+        </div>
+        <p class="card-note">Not yet code-signed. Windows SmartScreen may warn — click <strong>More info</strong>, then <strong>Run anyway</strong>. Bugs: <a href="https://github.com/Open-Write/open-write-studio/issues" target="_blank" rel="noopener">GitHub issues</a>.</p>
+        <p class="card-meta">Version 1.0.5 &middot; Windows 11 &middot; x64 &middot; Free</p>
+      </div>
+
+      <div class="dl-card">
+        <div class="card-kind">Open-source pipeline</div>
+        <h3>Open-Write</h3>
+        <p class="card-desc">The full pipeline as Python templates and a CLI toolchain for Visual Studio Code or Kilo Code. Fully customizable — modify any station, swap models, extend the workflow. Three templates: film screenplay, novel, and episodic television.</p>
+        <div class="card-buttons">
+          <a class="btn" href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+        <p class="card-note">Requires Python 3.11+, a code editor, and an LLM API key. See the repository README for setup instructions.</p>
+        <p class="card-meta">Apache 2.0 &middot; Free</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="media" class="dl-section">
+  <div class="container">
+    <div class="eyebrow">Media</div>
+    <h2>The work it produced.</h2>
+    <div class="dl-cards">
+
+      <div class="dl-card">
+        <div class="card-kind">Dual-track &middot; essays &amp; fiction</div>
+        <h3><em>Moloch: The Optimization Trap</em></h3>
+        <p class="card-desc">A structural argument about how self-reinforcing incentive systems drive harmful optimization across technology, governance, and media — told through alternating essays and fiction. Twenty-three chapters, footnoted and sourced.</p>
+        <div class="card-buttons">
+          <a class="btn" href="downloads/Moloch_Professional.pdf" download>PDF <span class="dl-size">957 KB</span></a>
+          <a class="btn" href="downloads/Moloch.epub" download>EPUB <span class="dl-size">566 KB</span></a>
+          <a class="btn" href="downloads/Moloch.docx" download>DOCX <span class="dl-size">348 KB</span></a>
+          <a class="btn" href="downloads/Moloch.txt" download>TXT <span class="dl-size">358 KB</span></a>
+        </div>
+        <p class="card-note">Also <a href="moloch.html">read online</a>.</p>
+        <p class="card-meta">~57,000 words &middot; 23 chapters &middot; Public domain</p>
+      </div>
+
+      <div class="dl-card">
+        <div class="card-kind">Literary novel</div>
+        <h3><em>A Thousand Silences</em></h3>
+        <p class="card-desc">A novel of the Haitian Revolution, following a French translator who slowly recognizes that the precision of his work is what makes him complicit. Drafted from a single prompt with iterative pipeline tuning and zero editorial intervention.</p>
+        <div class="card-buttons">
+          <a class="btn" href="downloads/A_Thousand_Silences.pdf" download>PDF <span class="dl-size">415 KB</span></a>
+          <a class="btn" href="downloads/A_Thousand_Silences.epub" download>EPUB <span class="dl-size">128 KB</span></a>
+          <a class="btn" href="downloads/A_Thousand_Silences.txt" download>TXT <span class="dl-size">287 KB</span></a>
+        </div>
+        <p class="card-note">Also <a href="a-thousand-silences.html">read all 30 chapters online</a>.</p>
+        <p class="card-meta">52,000 words &middot; 30 chapters &middot; Public domain</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="colophon">
+      <strong>Open-Write</strong> releases under the Apache 2.0 license, developed and maintained by <a href="index.html#about">Nicholas Detweiler</a>.
+      <strong>Open-Write Studio</strong> is a standalone application built on the same pipeline.
+      <div class="small-print">Open-Write Studio is in beta. The open-source pipeline continues as the fully customizable version for developers and power users.</div>
+    </div>
+    <div class="links">
+      <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">Open-Write</a>
+      <a href="https://github.com/Open-Write/open-write-studio" target="_blank" rel="noopener">Studio</a>
+      <a href="https://ko-fi.com/nicholasdetweiler" target="_blank" rel="noopener">Support</a>
+      <a href="mailto:open.write.studio@gmail.com">Contact</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

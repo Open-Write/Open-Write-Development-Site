@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open-Write Studio — Standalone Writing App for Windows · Open-Write</title>
+<meta name="description" content="Open-Write Studio is a standalone Windows application that brings the full Open-Write pipeline — multi-agent drafting, critique, and revision — to your desktop without Visual Studio Code or Kilo Code. Free, in beta.">
+<link rel="canonical" href="https://open-write-studio.com/open-write-studio.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Open-Write">
+<meta property="og:title" content="Open-Write Studio — Standalone Writing App for Windows">
+<meta property="og:description" content="The full Open-Write pipeline as a standalone Windows application. No VS Code or Kilo Code required. Free, in beta.">
+<meta property="og:url" content="https://open-write-studio.com/open-write-studio.html">
+<meta property="og:image" content="https://open-write-studio.com/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Open-Write Studio — Standalone Writing App for Windows">
+<meta name="twitter:description" content="The full Open-Write pipeline as a standalone Windows application. Free, in beta.">
+<meta name="twitter:image" content="https://open-write-studio.com/og-image.png">
+<link rel="icon" href="Logo-square.jpg">
+<link rel="stylesheet" href="open-write.css">
+<style>
+.studio-hero {
+    padding: 5rem 0 4rem;
+    border-bottom: 1px solid var(--rule);
+    text-align: center;
+}
+.studio-hero .container { max-width: 48rem; }
+.studio-hero .kicker {
+    text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem;
+    color: var(--accent); margin-bottom: 1.5rem;
+}
+.studio-hero h1 {
+    font-size: clamp(2rem, 4vw, 3rem); line-height: 1.1; margin: 0 0 1rem;
+    font-weight: 400; letter-spacing: -0.01em;
+}
+.studio-hero h1 em { font-style: italic; color: var(--accent); }
+.studio-hero .deck {
+    color: var(--ink-soft); font-size: 1.0625rem; line-height: 1.6;
+    margin: 1.5rem auto 0; max-width: 38rem;
+}
+.studio-hero .meta {
+    margin-top: 2rem; font-size: 0.8125rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center;
+}
+.download-strip {
+    background: var(--bg-elev);
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    padding: 3rem 0;
+    text-align: center;
+}
+.download-strip .container { max-width: 48rem; }
+.download-strip h2 {
+    font-size: 1.25rem; margin: 0 0 0.5rem; font-weight: 400;
+}
+.download-strip p {
+    color: var(--ink-soft); font-size: 0.9375rem; margin: 0 0 2rem;
+}
+.download-buttons {
+    display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;
+}
+.dl-size { font-size: 0.75rem; opacity: 0.7; }
+.beta-banner {
+    background: rgba(184, 150, 11, 0.08);
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    padding: 1.5rem 0;
+    text-align: center;
+    font-size: 0.9375rem;
+    color: var(--ink-soft);
+}
+.beta-banner strong { color: var(--accent); font-weight: 400; }
+.beta-banner a { color: var(--accent); }
+.features { padding: 4rem 0; border-bottom: 1px solid var(--rule); }
+.features .container { max-width: 52rem; }
+.features h2 { text-align: center; margin-bottom: 3rem; }
+.feature-grid {
+    display: grid; grid-template-columns: 1fr; gap: 2.5rem;
+}
+@media (min-width: 56rem) { .feature-grid { grid-template-columns: 1fr 1fr; gap: 2rem 3rem; } }
+.feature h3 {
+    font-size: 1.125rem; margin: 0 0 0.5rem; font-weight: 400; font-style: italic;
+}
+.feature p {
+    color: var(--ink-soft); font-size: 0.9375rem; line-height: 1.55; margin: 0;
+}
+.install-section { padding: 4rem 0; border-bottom: 1px solid var(--rule); }
+.install-section .container { max-width: 44rem; }
+.install-section h2 { margin-bottom: 1.5rem; }
+.install-section p { color: var(--ink-soft); font-size: 1.0625rem; line-height: 1.6; margin: 0 0 1.5rem; }
+.install-section code {
+    font-family: ui-monospace, "SF Mono", "Courier New", monospace;
+    font-size: 0.875rem; background: var(--bg-elev); padding: 0.15rem 0.4rem; border-radius: 2px;
+}
+.install-note {
+    margin-top: 2rem; padding: 1.25rem 1.5rem; background: var(--bg-elev);
+    border-left: 2px solid var(--accent); font-size: 0.9375rem; color: var(--ink-soft);
+    line-height: 1.6;
+}
+.install-note strong { color: var(--ink); font-weight: 400; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="container">
+    <div class="logo-container">
+      <img src="Logo-banner.jpg" alt="Open-Write Logo" class="topbar-logo">
+      <span class="wordmark"><a href="index.html">Open-Write</a></span>
+    </div>
+    <nav>
+      <a href="#system">How it works</a>
+      <a href="index.html#work">The work</a>
+      <a href="moloch.html">Moloch</a>
+      <a href="#about">About</a>
+      <a href="downloads.html">Downloads</a>
+      <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Open-Write/open-write-studio" target="_blank" rel="noopener">Studio&nbsp;GH</a>
+    </nav>
+  </div>
+</div>
+
+<div class="studio-hero">
+  <div class="container">
+    <img src="Logo-square.jpg" alt="Open-Write Studio" style="max-width: 180px; height: auto; margin-bottom: 2.5rem; filter: drop-shadow(0 4px 20px rgba(184, 150, 11, 0.15));">
+    <div class="kicker">Standalone &middot; Windows&nbsp;11 &middot; Free &middot; Beta</div>
+    <h1>Open-Write <em>Studio</em></h1>
+    <p class="deck">The full Open-Write pipeline — multi-agent drafting, structured critique, resumable revision — as a standalone Windows application. No Visual Studio Code. No Kilo Code. Just the instrument.</p>
+    <div class="meta">
+      <span>Version 1.0.5</span>
+      <span>Windows 11</span>
+      <span>~28 MB</span>
+      <span>Free</span>
+    </div>
+  </div>
+</div>
+
+<div class="beta-banner">
+  <div class="container">
+    <strong>This is a beta release.</strong> Bugs can be reported at <a href="https://github.com/Open-Write/open-write-studio/issues" target="_blank" rel="noopener">the GitHub repository</a>.
+  </div>
+</div>
+
+<div class="download-strip">
+  <div class="container">
+    <h2>Download Open-Write Studio</h2>
+    <p>Free. No account required. Both installers bundle the full pipeline — no Python installation needed.</p>
+    <div class="download-buttons">
+      <a class="btn" href="downloads/Open-Write_1.0.5_x64-setup.exe" download>Installer (.exe) <span class="dl-size">(27 MB)</span></a>
+      <a class="btn" href="downloads/Open-Write_1.0.5_x64_en-US.msi" download>Installer (.msi) <span class="dl-size">(29 MB)</span></a>
+    </div>
+    <p style="margin-top: 1.5rem; font-size: 0.8125rem; color: var(--muted);">
+      Open-Write Studio is not yet code-signed. Windows SmartScreen may show a warning — click <strong style="color: var(--ink-soft);">More info</strong>, then <strong style="color: var(--ink-soft);">Run anyway</strong>.
+    </p>
+  </div>
+</div>
+
+<section class="features">
+  <div class="container">
+    <div class="eyebrow">What you get</div>
+    <h2>The same pipeline, your own machine.</h2>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>Full pipeline, no setup</h3>
+        <p>The six-station pipeline — Bible, Architect, Writer, Critics, Cutter, Reader — runs locally. The Python backend is bundled. No terminal, no dependencies, no configuration files to edit.</p>
+      </div>
+      <div class="feature">
+        <h3>22 LLM providers</h3>
+        <p>Connect to OpenRouter, OpenAI, Anthropic, Google AI, Mistral, Groq, xAI, DeepSeek, Qwen, and more — or run local models through LM Studio and Ollama with no API key at all.</p>
+      </div>
+      <div class="feature">
+        <h3>Three templates</h3>
+        <p>Film screenplay, novel, and episodic television — each self-contained with its own bible structure, mode definitions, and export tools.</p>
+      </div>
+      <div class="feature">
+        <h3>Local-first</h3>
+        <p>Your manuscripts, profiles, and notes are plain Markdown files in a folder you control. Nothing leaves your machine except the AI requests you explicitly trigger.</p>
+      </div>
+      <div class="feature">
+        <h3>Resumable pipeline</h3>
+        <p>Stop at any phase and pick up where you left off. The state server tracks what your characters know, which plants have paid off, and where each scene sits on the clock.</p>
+      </div>
+      <div class="feature">
+        <h3>Multi-model critique</h3>
+        <p>Evaluation runs across more than one model and takes the union of what they flag — the way you'd never have a draft proofread only by its own author.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="system">
+  <div class="container">
+    <div class="eyebrow">Two versions</div>
+    <h2>Open-Write vs. Open-Write Studio</h2>
+    <p class="section-intro">
+      Both run the same pipeline. The difference is how you drive it.
+    </p>
+    <div class="paths" style="grid-template-columns: 1fr 1fr;">
+      <div class="path">
+        <h3>Open-Write <span style="font-size: 0.65em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em;">Open source</span></h3>
+        <p class="lead">The full pipeline as Python templates and a CLI toolchain, running inside Visual Studio Code or Kilo Code. Fully customizable — modify any station, swap models, extend the workflow. For developers and power users who want control over every detail.</p>
+        <span class="scope">Apache 2.0 · <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">GitHub</a></span>
+      </div>
+      <div class="path">
+        <h3>Open-Write Studio <span style="font-size: 0.65em; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em;">Beta</span></h3>
+        <p class="lead">The same pipeline as a standalone Windows application with a native installer. No terminal, no dependencies, no setup. For writers who want the capability without the configuration. Plain Markdown files in a folder you control.</p>
+        <span class="scope">Free · <a href="https://github.com/Open-Write/open-write-studio" target="_blank" rel="noopener">GitHub</a></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="support-band">
+  <div class="container">
+    <div class="support-inner">
+      <div class="eyebrow">Support the work</div>
+      <h2>Free, and staying that way.</h2>
+      <p>Open-Write is open-source and the demonstration works are in the public domain — no paywall, now or later. I built it on two months away from regular work. If it was worth something to you, you can put something in the jar. Entirely optional, always.</p>
+      <a class="btn secondary" href="https://ko-fi.com/nicholasdetweiler" target="_blank" rel="noopener">Support Open-Write</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="colophon">
+      <strong>Open-Write</strong> releases under the Apache 2.0 license, developed and maintained by <a href="index.html#about">Nicholas Detweiler</a>.
+      <strong>Open-Write Studio</strong> is a standalone application built on the same pipeline.
+      <div class="small-print">Open-Write Studio is in beta. The open-source pipeline continues as the fully customizable version for developers and power users.</div>
+    </div>
+    <div class="links">
+      <a href="https://github.com/Open-Write/Open-Write" target="_blank" rel="noopener">Open-Write</a>
+      <a href="https://github.com/Open-Write/open-write-studio" target="_blank" rel="noopener">Studio</a>
+      <a href="https://ko-fi.com/nicholasdetweiler" target="_blank" rel="noopener">Support</a>
+      <a href="mailto:open.write.studio@gmail.com">Contact</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
