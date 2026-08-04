@@ -41,6 +41,20 @@ _FRONTEND_DIST = _REPO_ROOT / "frontend" / "dist"
 _MARKETING_DIR = _REPO_ROOT / "marketing"
 
 
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "app": "Open-Write Web API",
+        "version": "1.0.0",
+        "repo_root": str(_REPO_ROOT),
+        "frontend_exists": _FRONTEND_DIST.is_dir(),
+        "marketing_exists": _MARKETING_DIR.is_dir(),
+        "index_exists": (_FRONTEND_DIST / "index.html").is_file(),
+        "cwd": os.getcwd(),
+    }
+
+
 def _mime_for(path: Path) -> str | None:
     """Return a content-type string for common static file extensions."""
     _TYPES = {
@@ -94,11 +108,6 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "app": "Open-Write Web API", "version": "1.0.0"}
-
-
 @app.get("/api/health")
 async def api_health_check():
     return {"status": "ok", "app": "Open-Write Web API", "version": "1.0.0"}
@@ -114,21 +123,30 @@ app.include_router(pipeline_router.router)
 app.include_router(writing_router.router)
 
 
+def _serve_file(path: Path, media_type: str | None = None) -> FileResponse | HTMLResponse:
+    """Serve a file if it exists, otherwise return a 404 with diagnostic info."""
+    if path.is_file():
+        return FileResponse(path, media_type=media_type or _mime_for(path))
+    return HTMLResponse(
+        f"<h1>File not found</h1><p>Expected at: {path}</p>"
+        f"<p>Exists: {path.exists()}</p>"
+        f"<p>Parent exists: {path.parent.exists()}</p>",
+        status_code=404,
+    )
+
+
 # ── Frontend SPA at /studio/ ─────────────────────────────────────────────
 @app.get("/studio")
 async def studio_root():
-    return FileResponse(_FRONTEND_DIST / "index.html")
+    return _serve_file(_FRONTEND_DIST / "index.html", "text/html")
 
 
 @app.get("/studio/{full_path:path}")
 async def studio_spa(full_path: str):
-    # Try the exact file first (assets, favicon, icons, etc.)
     candidate = _FRONTEND_DIST / full_path
     if candidate.is_file():
-        media_type = _mime_for(candidate)
-        return FileResponse(candidate, media_type=media_type)
-    # SPA fallback: any path under /studio/ that isn't a real file → index.html
-    return FileResponse(_FRONTEND_DIST / "index.html")
+        return FileResponse(candidate, media_type=_mime_for(candidate))
+    return _serve_file(_FRONTEND_DIST / "index.html", "text/html")
 
 
 # ── Marketing site at / ──────────────────────────────────────────────────
@@ -138,14 +156,8 @@ async def marketing_catch_all(full_path: str):
         full_path = "index.html"
     candidate = _MARKETING_DIR / full_path
     if candidate.is_file():
-        media_type = _mime_for(candidate)
-        return FileResponse(candidate, media_type=media_type)
-    # Try appending .html (so /privacy works for /privacy.html)
+        return FileResponse(candidate, media_type=_mime_for(candidate))
     html_candidate = _MARKETING_DIR / (full_path + ".html")
     if html_candidate.is_file():
         return FileResponse(html_candidate, media_type="text/html")
-    # Fallback to marketing index
-    index = _MARKETING_DIR / "index.html"
-    if index.is_file():
-        return FileResponse(index, media_type="text/html")
-    return HTMLResponse("<h1>Not found</h1>", status_code=404)
+    return _serve_file(_MARKETING_DIR / "index.html", "text/html")

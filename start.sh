@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Railway startup: run migration, then start the server.
-set -e
 
 cd "$(dirname "$0")"
 
-# Run database migration
-python init_db.py
+# Run database migration (non-fatal — the app can still serve pages)
+python init_db.py || echo "Migration skipped or failed (non-fatal)"
 
 # Create the data directory for user projects
 mkdir -p "${OPENWRITE_DATA:-/tmp/openwrite_data}/users"
