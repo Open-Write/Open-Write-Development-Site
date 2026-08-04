@@ -422,24 +422,33 @@ def _build_phase_resolver(project_path: str = ""):
             project_path=project_path,
             call_log=_call_log,
         )
-        # R2: Provider switching is an explicit decision, not an exception handler.
-        # R3: A critic must never fall back to the writer model for the same unit.
+        # R3: A critic must never fall back to the writer model for the same
+        # unit. The governing principle from the project brief: "a critic must
+        # never fall back to the model that wrote the chapter it is critiquing;
+        # if no independent model is available the critic fails and records
+        # critic_unavailable — a visible gap — rather than silently self-reviewing."
+        #
+        # Two consequences:
+        #   1. The switch target for a critic is NEVER the writer's model.
+        #      Since the only configured alternate is the writer's model,
+        #      switching is disabled for critic phases entirely.
+        #   2. If critic_model == writer_model, the primary call is self-critique.
+        #      The call must fail immediately so _exec_critics records
+        #      critic_unavailable (deploy 2 path).
         if phase in ("critics", "editorial"):
             author_id = settings_store.get_writer_model()
-            if model_id != author_id:
-                a_key, a_name, a_base = _get_info(author_id)
-                switch_call = _make_model_call(
-                    a_key, a_name, a_base,
-                    provider_id=author_id.split("/")[0] if "/" in author_id else "unknown",
-                    phase=phase,
-                    project_path=project_path,
-                    call_log=_call_log,
-                    _is_switch=True,
-                    _switched_from=model_id,
-                )
-                call.set_switch(switch_call, switch_provider=author_id)
-            # else: same model — no switch provided. R3: the critic fails
-            # with _ModelCallFailure rather than self-critiquing.
+            if model_id == author_id:
+                # Self-critique: return a call that fails immediately.
+                async def _self_critique_blocked(s: str, u: str) -> str:
+                    raise _ModelCallFailure(
+                        f"R3: critic_model ({model_id}) == writer_model ({author_id}). "
+                        f"Configure a distinct critic model in Settings to run critics.",
+                        None,
+                    )
+                return _self_critique_blocked
+            # Different models: no switch. If the critic fails, it fails
+            # honestly with critic_unavailable (deploy 2 path), not by
+            # switching to the writer's model.
         return call
     return _resolve
 
@@ -505,6 +514,20 @@ class StartRevisionRequest(BaseModel):
 async def start_run(project_id: str, req: StartRunRequest,
                     current=Depends(auth.get_current_user)):
     project = _resolve_project(project_id, current["id"])
+
+    # R3 pre-flight: critic_model must differ from writer_model.
+    writer_id = settings_store.get_writer_model()
+    critic_id = settings_store.get_critic_model()
+    if writer_id and critic_id and writer_id == critic_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"R3: writer_model and critic_model are both '{writer_id}'. "
+                f"Configure a distinct critic model in Settings → Model routing "
+                f"to run this pipeline. A critic must never review its own output."
+            ),
+        )
+
     name = req.project_name or _project_name(project_id, current["id"])
     state = orchestrator.start_run(project, name, req.word_floor,
                                    instructions=req.instructions,
@@ -997,6 +1020,20 @@ class AutoRunRequest(BaseModel):
 async def auto_run_start(project_id: str, req: AutoRunRequest,
                          current=Depends(auth.get_current_user)):
     _resolve_project(project_id, current["id"])
+
+    # R3 pre-flight: critic_model must differ from writer_model.
+    writer_id = settings_store.get_writer_model()
+    critic_id = settings_store.get_critic_model()
+    if writer_id and critic_id and writer_id == critic_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"R3: writer_model and critic_model are both '{writer_id}'. "
+                f"Configure a distinct critic model in Settings → Model routing "
+                f"to run this pipeline. A critic must never review its own output."
+            ),
+        )
+
     key = _ar_key(current["id"], project_id)
 
     # If a previous task is genuinely still running, reject.
