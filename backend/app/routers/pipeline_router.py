@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import os
 import pathlib
 import re
+import time
 import zipfile
 from datetime import datetime
 
@@ -26,6 +28,7 @@ from app import auth, config, db, settings_store, versions
 from app.pipeline import orchestrator, outputs, critics
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
+log = logging.getLogger(__name__)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -150,35 +153,258 @@ def _resolve_call_model(qualified: str | None):
     return resolved.api_key, resolved.model_name, resolved.base_url
 
 
-def _make_model_call(api_key: str, model_name: str, base_url: str):
-    from app.ai.openrouter import run_chat
+def _make_model_call(
+    api_key: str,
+    model_name: str,
+    base_url: str,
+    provider_id: str = "unknown",
+    phase: str = "unknown",
+    chapter: int | None = None,
+    project_path: str = "",
+    call_log: "CallLogWriter | None" = None,
+    _transport: "httpx.AsyncBaseTransport | None" = None,
+    _is_switch: bool = False,
+    _switched_from: str = "",
+):
+    """Build an injectable async model call with classified retry logic.
+
+    Ported from Standalone (pipeline.py:405-604) with these deliberate
+    divergences:
+      - Tracking headers use https://openwrite.app (not localhost:1420).
+      - Tracking headers conditional on OpenRouter base URL.
+      - _transport parameter for test injection (production uses None).
+
+    Three independent budgets (R1):
+      - transport_attempts: per-call, for classes 1-3 (network/rate-limit/server)
+      - content_attempts: per-call, for classes 5/7/8 (refusal/empty/malformed)
+      - quality_attempts: per-chapter, managed by the orchestrator (not here)
+
+    Provider switching is an explicit decision (R2): permitted for classes
+    2, 3, 5, 7 only. The switch callback is injected, not inferred from
+    exception handlers.
+
+    Every call is recorded (R5).
+    """
+    from app.ai.failure_classifier import (
+        FailureClass, Action, classify_response, classify_exception,
+    )
+    from app.ai.call_recorder import make_record, CallLogWriter as _CLW
+
+    OPENROUTER_BASE = "https://openrouter.ai/api/v1"
     PIPELINE_CALL_TIMEOUT = 120.0
 
-    async def model_call(system_prompt: str, user_prompt: str) -> str:
-        last_exc = None
-        for attempt in range(5):
+    # Switch callback: set by the resolver to enable provider switching.
+    # Signature: async (system_prompt, user_prompt) -> str
+    # None = switching not available for this call.
+    _switch_call: "ModelCall | None" = None
+    _switch_provider: str = ""
+
+    def set_switch(switch_call: "ModelCall | None", switch_provider: str = ""):
+        nonlocal _switch_call, _switch_provider
+        _switch_call = switch_call
+        _switch_provider = switch_provider
+
+    model_call = _ModelCallWithSwitch(set_switch=set_switch)
+
+    async def _execute(system_prompt: str, user_prompt: str) -> str:
+        transport_budget = 5   # classes 1-3
+        content_budget = 2     # classes 5/7/8
+        switched = False
+
+        for transport_attempt in range(1, transport_budget + 1):
+            start = time.monotonic()
+            finish_reason = None
+            content_val = None
+            http_status = 200
+            error_body = None
+            retry_after = None
+
             try:
-                return await run_chat(
-                    api_key, model_name, system_prompt,
-                    [{"role": "user", "content": user_prompt}],
-                    temperature=0.4, base_url=base_url,
-                    timeout=PIPELINE_CALL_TIMEOUT,
+                async with httpx.AsyncClient(
+                    timeout=PIPELINE_CALL_TIMEOUT, transport=_transport,
+                ) as client:
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    }
+                    if OPENROUTER_BASE in base_url.rstrip("/"):
+                        headers["HTTP-Referer"] = "https://openwrite.app"
+                        headers["X-Title"] = "Open-Write"
+
+                    response = await client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        headers=headers,
+                        json={
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            "temperature": 0.4,
+                        },
+                    )
+                    elapsed = round((time.monotonic() - start) * 1000)
+                    http_status = response.status_code
+                    retry_after = response.headers.get("retry-after")
+
+                    if response.status_code >= 400:
+                        try:
+                            error_body = response.json()
+                        except Exception:
+                            error_body = {"raw": response.text[:500]}
+                        cls = classify_response(
+                            http_status=http_status,
+                            finish_reason=None,
+                            content=None,
+                            error_body=error_body,
+                            retry_after_header=retry_after,
+                        )
+                    else:
+                        data = response.json()
+                        choice = data.get("choices", [{}])[0]
+                        msg = choice.get("message", {})
+                        finish_reason = choice.get("finish_reason")
+                        content_val = msg.get("content")
+                        cls = classify_response(
+                            http_status=http_status,
+                            finish_reason=finish_reason,
+                            content=content_val,
+                        )
+
+            except Exception as exc:
+                elapsed = round((time.monotonic() - start) * 1000)
+                cls = classify_exception(exc)
+
+            # ── Record the call (R5) ─────────────────────────────────
+            if call_log is not None:
+                rec = make_record(
+                    phase=phase,
+                    chapter=chapter,
+                    model=model_name,
+                    provider=provider_id,
+                    failure_class=cls.failure_class.name.lower() if cls.failure_class != FailureClass.OK else "ok",
+                    attempt=transport_attempt,
+                    switched=_is_switch or switched,
+                    switched_to=_switched_from if _is_switch else (_switch_provider if switched else None),
+                    finish_reason=finish_reason,
+                    elapsed_ms=elapsed,
+                    detail=cls.detail,
+                    transport_attempts=transport_attempt,
+                    content_attempts=content_budget,
                 )
-            except httpx.HTTPStatusError:
-                raise
-            except httpx.RequestError as exc:
-                last_exc = exc
-                if attempt < 4:
-                    await asyncio.sleep(min(2 * (2 ** attempt), 16))
-        raise last_exc
+                call_log.write(rec)
+
+            # ── OK — return content ──────────────────────────────────
+            if cls.failure_class == FailureClass.OK:
+                from app.ai.sanitizer import sanitize
+                return sanitize(content_val) if content_val is not None else ""
+
+            # ── Class 4: Auth/payment — halt immediately ─────────────
+            if cls.failure_class == FailureClass.AUTH_PAYMENT:
+                raise httpx.HTTPStatusError(
+                    message=cls.detail,
+                    request=httpx.Request("POST", f"{base_url}/chat/completions"),
+                    response=httpx.Response(http_status, json=error_body),
+                )
+
+            # ── Classes where retry_same is not allowed ──────────────
+            if not cls.retry_same_allowed:
+                # Class 5 (Refusal): switch provider if available (R2)
+                if cls.failure_class == FailureClass.REFUSAL and _switch_call and not switched:
+                    switched = True
+                    try:
+                        return await _switch_call(system_prompt, user_prompt)
+                    except Exception:
+                        pass  # Switch failed — fall through to halt
+                # Class 6 (Truncation): halt unit, preserve partial content
+                if cls.failure_class == FailureClass.TRUNCATION:
+                    raise _TruncationError(
+                        cls.detail,
+                        partial_content=content_val or "",
+                        finish_reason=finish_reason,
+                    )
+                # All others: halt
+                raise _ModelCallFailure(cls.detail, cls.failure_class)
+
+            # ── Transport retry with backoff (classes 1-3) ───────────
+            if cls.action == Action.RETRY_WITH_BACKOFF:
+                if transport_attempt < transport_budget:
+                    if cls.retry_after:
+                        delay = cls.retry_after
+                    elif transport_attempt - 1 < len(cls.backoff_schedule):
+                        delay = cls.backoff_schedule[transport_attempt - 1]
+                    else:
+                        delay = cls.backoff_schedule[-1] if cls.backoff_schedule else 30
+
+                    # Provider switch after 3 attempts (classes 2, 3)
+                    if transport_attempt >= 3 and cls.switch_allowed and _switch_call and not switched:
+                        switched = True
+                        try:
+                            return await _switch_call(system_prompt, user_prompt)
+                        except Exception:
+                            pass  # Switch failed — continue retrying same
+
+                    await asyncio.sleep(delay)
+                    continue
+
+            # ── Content retry (classes 5/7/8) ────────────────────────
+            if content_budget > 0 and cls.retry_same_allowed:
+                content_budget -= 1
+                continue
+
+            # ── Exhausted — raise ────────────────────────────────────
+            raise _ModelCallFailure(cls.detail, cls.failure_class)
+
+        # All transport attempts exhausted
+        raise _ModelCallFailure("transport retry budget exhausted", FailureClass.NETWORK_TRANSIENT)
+
+    model_call._execute = _execute
     return model_call
 
 
-def _build_phase_resolver():
+class _ModelCallFailure(Exception):
+    """Raised when a model call fails after all retries."""
+    def __init__(self, detail: str, failure_class: "FailureClass"):
+        super().__init__(detail)
+        self.failure_class = failure_class
+
+
+class _TruncationError(Exception):
+    """Raised when output is truncated. Preserves partial content."""
+    def __init__(self, detail: str, partial_content: str, finish_reason: str | None):
+        super().__init__(detail)
+        self.partial_content = partial_content
+        self.finish_reason = finish_reason
+
+
+class _ModelCallWithSwitch:
+    """Wrapper that presents as a ModelCall but carries a switch setter.
+
+    The orchestrator receives this as a ModelCall (async callable). The
+    resolver uses set_switch() to inject the secondary provider before
+    handing it to the orchestrator.
+    """
+    def __init__(self, set_switch):
+        self._execute = None
+        self._set_switch = set_switch
+
+    async def __call__(self, system_prompt: str, user_prompt: str) -> str:
+        return await self._execute(system_prompt, user_prompt)
+
+    def set_switch(self, switch_call, switch_provider: str = ""):
+        self._set_switch(switch_call, switch_provider)
+
+
+def _build_phase_resolver(project_path: str = ""):
     """Return a `resolve_for_phase(phase)` callable used by advance-phase and
     the background tasks. Requires user settings to already be bound (via the
-    request context or `settings_store.bind_user_settings`)."""
+    request context or `settings_store.bind_user_settings`).
+
+    ``project_path`` is passed to the call recorder for per-project log files.
+    """
+    from app.ai.call_recorder import CallLogWriter
     _cache: dict[str, tuple[str, str, str]] = {}
+    _call_log = CallLogWriter(project_path) if project_path else None
 
     def _get_info(mid: str) -> tuple[str, str, str]:
         if mid not in _cache:
@@ -188,19 +414,32 @@ def _build_phase_resolver():
     def _resolve(phase: str):
         model_id = settings_store.get_model_for_phase(phase)
         key, name, base = _get_info(model_id)
-        call = _make_model_call(key, name, base)
+        provider_id = model_id.split("/")[0] if "/" in model_id else "unknown"
+        call = _make_model_call(
+            key, name, base,
+            provider_id=provider_id,
+            phase=phase,
+            project_path=project_path,
+            call_log=_call_log,
+        )
+        # R2: Provider switching is an explicit decision, not an exception handler.
+        # R3: A critic must never fall back to the writer model for the same unit.
         if phase in ("critics", "editorial"):
             author_id = settings_store.get_writer_model()
             if model_id != author_id:
                 a_key, a_name, a_base = _get_info(author_id)
-                author_call = _make_model_call(a_key, a_name, a_base)
-
-                async def _fallback(sys_p: str, usr_p: str) -> str:
-                    try:
-                        return await call(sys_p, usr_p)
-                    except Exception:
-                        return await author_call(sys_p, usr_p)
-                return _fallback
+                switch_call = _make_model_call(
+                    a_key, a_name, a_base,
+                    provider_id=author_id.split("/")[0] if "/" in author_id else "unknown",
+                    phase=phase,
+                    project_path=project_path,
+                    call_log=_call_log,
+                    _is_switch=True,
+                    _switched_from=model_id,
+                )
+                call.set_switch(switch_call, switch_provider=author_id)
+            # else: same model — no switch provided. R3: the critic fails
+            # with _ModelCallFailure rather than self-critiquing.
         return call
     return _resolve
 
@@ -596,7 +835,7 @@ async def _run_phase_task(project_id: str, user_id: str, instructions: str, proj
     """
     try:
         settings_store.bind_user_settings(user_id)
-        resolve_for_phase = _build_phase_resolver()
+        resolve_for_phase = _build_phase_resolver(project_path=project)
         try:
             result = await orchestrator.advance_phase(project, resolve_for_phase)
         except (orchestrator.PhaseBusyError, RuntimeError) as exc:
@@ -644,7 +883,7 @@ async def _auto_run_loop(key: str, project_id: str, user_id: str, instructions: 
 
         project = os.path.realpath(str(config.project_path(user_id, project_id)))
 
-        resolve_for_phase = _build_phase_resolver()
+        resolve_for_phase = _build_phase_resolver(project_path=project)
 
         while _ar_status[key]["running"]:
             state = orchestrator.load_run_state(project)
