@@ -41,20 +41,6 @@ _FRONTEND_DIST = _REPO_ROOT / "frontend" / "dist"
 _MARKETING_DIR = _REPO_ROOT / "marketing"
 
 
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "ok",
-        "app": "Open-Write Web API",
-        "version": "1.0.0",
-        "repo_root": str(_REPO_ROOT),
-        "frontend_exists": _FRONTEND_DIST.is_dir(),
-        "marketing_exists": _MARKETING_DIR.is_dir(),
-        "index_exists": (_FRONTEND_DIST / "index.html").is_file(),
-        "cwd": os.getcwd(),
-    }
-
-
 def _mime_for(path: Path) -> str | None:
     """Return a content-type string for common static file extensions."""
     _TYPES = {
@@ -106,6 +92,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "app": "Open-Write Web API",
+        "version": "1.0.0",
+        "repo_root": str(_REPO_ROOT),
+        "frontend_exists": _FRONTEND_DIST.is_dir(),
+        "marketing_exists": _MARKETING_DIR.is_dir(),
+        "index_exists": (_FRONTEND_DIST / "index.html").is_file(),
+        "cwd": os.getcwd(),
+    }
 
 
 @app.get("/api/health")
