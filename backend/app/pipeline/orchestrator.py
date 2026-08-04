@@ -1045,58 +1045,15 @@ async def _exec_critics(state: RunState, project: str, model_call: ModelCall) ->
             comp = critics_mod.compose_artifact(ctype, chapter, reply, chash, project)
             results.append(comp)
         except Exception as exc:
-            # Write a substantive stub artifact so the gate sees the file exists
-            # and reports the actual error instead of "MISSING" or "TOO_SHORT".
-            # The stub carries the real chapter hash so the hash-binding check
-            # passes, and enough substance (>=120 words) to satisfy the gate's
-            # word-count threshold.
+            # R4: Never fabricate a verdict. A critic that did not run produces
+            # critic_unavailable — a recorded absence, not a stub REVISE.
+            # A chapter missing a critic should fail its gate on that basis.
             error_msg = f"{type(exc).__name__}: {exc}"
-            try:
-                stub = (
-                    f"chapter_hash: {chash}\n\n"
-                    f"## Findings\n\n"
-                    f"1. This {critic_type} critic was unable to complete its review. "
-                    f"The model provider returned an error while generating the critique: "
-                    f"{error_msg}. This means the chapter has not been reviewed by the "
-                    f"{critic_type} critic and no located findings can be reported. "
-                    f"The pipeline will continue with the remaining critics and the "
-                    f"editorial evaluation, but this gap should be addressed by re-running "
-                    f"the {critic_type} critic once the provider connection is restored.\n\n"
-                    f"2. Because the {critic_type} critic could not analyze the chapter, "
-                    f"there are no line-specific findings, no quoted spans, and no "
-                    f"located issues to report. The chapter may still contain problems "
-                    f"that this critic would normally flag. A manual review of the chapter "
-                    f"is recommended until this critic can be re-run successfully.\n\n"
-                    f"3. The failure was caused by a network-level error reaching the "
-                    f"model provider (likely a timeout or connection reset after multiple "
-                    f"sequential API calls). This is typically transient and resolves "
-                    f"on retry. The other critics in this run may still produce valid "
-                    f"reviews if their calls succeed.\n\n"
-                    f"## Overall Assessment\n\n"
-                    f"The {critic_type} critic could not complete its review of this "
-                    f"chapter due to a provider error ({error_msg}). No verdict can be "
-                    f"issued. The chapter should be re-reviewed once the connection is "
-                    f"stable. In the meantime, the pipeline continues to avoid blocking "
-                    f"the entire production run on a single transient failure.\n\n"
-                    f"VERDICT: REVISE\n"
-                )
-                rel = critics_mod.artifact_relpath(ctype, chapter)
-                full = os.path.join(project, rel)
-                os.makedirs(os.path.dirname(full), exist_ok=True)
-                with open(full, "w", encoding="utf-8") as f:
-                    f.write(stub)
-                results.append({
-                    "critic_type": ctype,
-                    "artifact_path": rel,
-                    "verdict": "REVISE",
-                    "word_count": len(stub.split()),
-                    "located_findings": 0,
-                    "has_chapter_hash": True,
-                    "gate_substance_ok": False,
-                    "error": error_msg,
-                })
-            except Exception:
-                failures.append({"critic": ctype, "error": error_msg})
+            failures.append({
+                "critic": ctype,
+                "error": error_msg,
+                "outcome": "critic_unavailable",
+            })
     return {"critics": results, "failures": failures, "chapter": chapter}
 
 
