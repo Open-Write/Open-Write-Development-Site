@@ -447,6 +447,67 @@ async def export_project(project_id: str, current=Depends(auth.get_current_user)
     )
 
 
+@router.get("/{project_id}/export-from-versions")
+async def export_from_versions(project_id: str, current=Depends(auth.get_current_user)):
+    """Recover project content from the version history in the database.
+
+    Builds a ZIP from the versions table instead of the filesystem, so content
+    is recoverable even if on-disk files are lost (e.g. ephemeral container storage).
+    """
+    _resolve_project(project_id, current["id"])
+    project_name = _project_name(project_id, current["id"])
+
+    rows = db.query_all(
+        "SELECT content_type, chapter_number, phase, content, created_at "
+        "FROM versions WHERE project_id = %s ORDER BY created_at ASC",
+        (project_id,),
+    )
+
+    if not rows:
+        raise HTTPException(404, "No version history found for this project.")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        seen: dict[str, int] = {}
+        for row in rows:
+            ct = row["content_type"]
+            ch = row["chapter_number"]
+            content = row["content"] or ""
+            # Build a filename: content_type + optional chapter suffix
+            if ch is not None:
+                base = f"{ct}_ch{ch}"
+            else:
+                base = ct
+            # Deduplicate: if same base appears multiple times, suffix with a counter
+            count = seen.get(base, 0)
+            seen[base] = count + 1
+            if count > 0:
+                fname = f"versions/{base}_v{count + 1}.md"
+            else:
+                fname = f"versions/{base}.md"
+            zf.writestr(fname, content)
+
+        # Add a manifest listing what's in the archive
+        manifest_lines = [f"# Version History Export — {project_name}", ""]
+        for row in rows:
+            ts = row["created_at"].isoformat() if row.get("created_at") else "?"
+            ch_str = f" ch{row['chapter_number']}" if row["chapter_number"] else ""
+            manifest_lines.append(
+                f"- {row['content_type']}{ch_str} ({row['phase']}) — {ts}"
+            )
+        zf.writestr("versions/MANIFEST.md", "\n".join(manifest_lines))
+
+    buf.seek(0)
+    safe_name = re.sub(r'[^\w\s-]', '', project_name).strip().replace(' ', '_') or "project"
+    filename = f"{safe_name}_version_history.zip"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{project_id}/reset-run")
 async def reset_run(project_id: str, req: ResetRunRequest,
                     current=Depends(auth.get_current_user)):
