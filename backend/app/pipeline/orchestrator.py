@@ -1413,6 +1413,7 @@ async def _advance_phase_locked(project: str, resolve_call: ModelResolver) -> di
     nxt = next_phase(state)
     if nxt is None:
         state.status = "complete"
+        state.current_phase = None
     else:
         # If we're crossing from the last unit phase to the next chapter's first,
         # increment the unit index.
