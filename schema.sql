@@ -74,3 +74,45 @@ CREATE TABLE IF NOT EXISTS approved_emails (
 INSERT INTO approved_emails (email, is_admin)
 VALUES ('detweiler.nicholas@gmail.com', TRUE)
 ON CONFLICT (email) DO NOTHING;
+
+-- ── Editorial Reviews ─────────────────────────────────────────────────────────
+-- Stores user-uploaded work for editorial review (not tied to pipeline projects).
+CREATE TABLE IF NOT EXISTS editorial_reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT 'Untitled',
+    original_content TEXT NOT NULL,
+    current_content TEXT NOT NULL,
+    format TEXT NOT NULL DEFAULT 'prose',
+    supporting_materials TEXT DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS editorial_review_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_id UUID REFERENCES editorial_reviews(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    feedback TEXT DEFAULT '',
+    instructions TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS editorial_review_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_id UUID REFERENCES editorial_reviews(id) ON DELETE CASCADE,
+    report_type TEXT NOT NULL,
+    report TEXT NOT NULL,
+    verdict TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_reviews_user
+    ON editorial_reviews (user_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_review_versions
+    ON editorial_review_versions (review_id, version_number DESC);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_review_reports
+    ON editorial_review_reports (review_id, report_type);
