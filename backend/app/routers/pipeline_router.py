@@ -516,6 +516,7 @@ async def start_run(project_id: str, req: StartRunRequest,
     project = _resolve_project(project_id, current["id"])
 
     # R3 pre-flight: critic_model must differ from writer_model.
+    # Hard block — beta has two users, no migration needed.
     writer_id = settings_store.get_writer_model()
     critic_id = settings_store.get_critic_model()
     if writer_id and critic_id and writer_id == critic_id:
@@ -1021,7 +1022,7 @@ async def auto_run_start(project_id: str, req: AutoRunRequest,
                          current=Depends(auth.get_current_user)):
     _resolve_project(project_id, current["id"])
 
-    # R3 pre-flight: critic_model must differ from writer_model.
+    # R3 pre-flight: soft warning (same as start_run).
     writer_id = settings_store.get_writer_model()
     critic_id = settings_store.get_critic_model()
     if writer_id and critic_id and writer_id == critic_id:
@@ -1029,8 +1030,9 @@ async def auto_run_start(project_id: str, req: AutoRunRequest,
             status_code=400,
             detail=(
                 f"R3: writer_model and critic_model are both '{writer_id}'. "
-                f"Configure a distinct critic model in Settings → Model routing "
-                f"to run this pipeline. A critic must never review its own output."
+                f"Auto-run cannot proceed with same-model critics — every chapter "
+                f"would critic_unavailable and gate-FAIL. Configure a distinct "
+                f"critic model in Settings → Model routing first."
             ),
         )
 

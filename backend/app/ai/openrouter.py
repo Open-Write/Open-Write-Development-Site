@@ -355,6 +355,7 @@ async def run_chat(
     # a string — passing None crashes with "expected string or bytes-like
     # object, got 'NoneType'".
     if raw_reply is None:
+        log.warning("run_chat model=%s content=null — possible refusal or truncation", model_id)
         raw_reply = ""
 
     # Normalize the reply. Under the Open-Write advisory policy em/en dashes

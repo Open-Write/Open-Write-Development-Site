@@ -193,7 +193,21 @@ def get_writer_model() -> str:
 
 def get_critic_model() -> str:
     settings = load_settings()
-    return settings.get("critic_model", "") or settings.get("default_model", DEFAULT_SETTINGS["default_model"])
+    explicit = settings.get("critic_model", "")
+    if explicit:
+        return explicit
+    # If critic_model is unset, try to pick a distinct model from the user's
+    # configured providers. This avoids R3 blocks for users who only set a
+    # default model.
+    writer = get_writer_model()
+    if writer:
+        for p in get_providers():
+            for m in p.get("models", []):
+                candidate = f"{p['id']}/{m}" if "/" not in m else m
+                if candidate != writer:
+                    return candidate
+    # No distinct model available — fall back to default_model (will trigger R3).
+    return settings.get("default_model", DEFAULT_SETTINGS["default_model"])
 
 
 def get_model_for_phase(phase: str) -> str:

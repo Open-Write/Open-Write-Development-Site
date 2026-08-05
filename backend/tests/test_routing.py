@@ -45,6 +45,27 @@ def _make_mock_transport(responses):
     return httpx.MockTransport(handler)
 
 
+class _ConnectErrorTransport:
+    """Transport that raises ConnectError for the first N calls, then returns OK."""
+    def __init__(self, fail_count):
+        self._fail_count = fail_count
+        self._calls = 0
+
+    async def handle_async_request(self, request):
+        self._calls += 1
+        if self._calls <= self._fail_count:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "recovered", "reasoning_content": ""}, "finish_reason": "stop"}],
+        })
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
@@ -141,8 +162,7 @@ def test_refusal_without_switch_halts():
 
 def test_r3_same_model_critic_fails_immediately():
     """When critic_model == writer_model, the resolver returns a call that
-    immediately raises _ModelCallFailure — not a self-reviewing critic.
-    This is the real R3 enforcement: self-critique is prohibited."""
+    immediately raises _ModelCallFailure — not a self-reviewing critic."""
     from unittest.mock import patch, MagicMock
 
     with patch("app.routers.pipeline_router.settings_store") as mock_ss, \
@@ -155,7 +175,6 @@ def test_r3_same_model_critic_fails_immediately():
         resolver = _build_phase_resolver(project_path="/tmp/test")
         call = resolver("critics")
 
-        # The call must fail immediately with _ModelCallFailure (R3)
         with pytest.raises(_ModelCallFailure) as exc_info:
             _run(call("system", "user"))
         assert "R3" in str(exc_info.value)
@@ -165,8 +184,7 @@ def test_r3_same_model_critic_fails_immediately():
 
 def test_r3_different_model_critic_resolves():
     """When critic_model != writer_model, the resolver returns a normal
-    callable. The critic proceeds with its own model. No switch is provided
-    (switching is disabled for critics per R3)."""
+    callable. The critic proceeds with its own model."""
     from unittest.mock import patch, MagicMock
 
     with patch("app.routers.pipeline_router.settings_store") as mock_ss, \
@@ -200,14 +218,8 @@ def test_r3_critic_never_switches_to_writer_model():
         resolver = _build_phase_resolver(project_path="/tmp/test")
         call = resolver("critics")
 
-        # The call is a _ModelCallWithSwitch, but set_switch was never called
-        # (the resolver doesn't provide a switch for critics). Verify by
-        # checking that the internal _switch_call is None.
         assert isinstance(call, _ModelCallWithSwitch)
-        # The _set_switch function is the setter, not a switch value.
-        # Verify no switch was injected by checking the closure state.
-        # _ModelCallWithSwitch._execute has _switch_call=None by default.
-        assert call._set_switch is not None  # setter exists
+        assert call._set_switch is not None
 
 
 # ── Test: transport failure does not decrement content budget ────────────────
@@ -235,10 +247,11 @@ def test_transport_failure_does_not_decrement_content_budget():
         assert records[1]["content_attempts"] == 2
 
 
-# ── Test: class 1 retry sequence with patched sleep ─────────────────────────
+# ── Test: class 3 server error retries with backoff [2, 6, 18] ──────────────
 
-def test_class_1_retry_sequence_with_patched_sleep():
-    """Class 3 (server error) retries with backoff without actually waiting."""
+def test_class_3_server_error_retries_with_backoff():
+    """Class 3 (server error) retries with backoff [2, 6, 18, ...] without
+    actually waiting. 5 attempts total, succeeds on the 5th."""
     sleep_calls = []
 
     original_sleep = asyncio.sleep
@@ -264,7 +277,97 @@ def test_class_1_retry_sequence_with_patched_sleep():
         asyncio.sleep = original_sleep
 
     assert result == "recovered"
-    assert len(sleep_calls) >= 3
+    # Class 3 backoff: [2, 6, 18, 18, ...]. 4 sleeps for 5 attempts.
+    assert len(sleep_calls) == 4
+    assert sleep_calls[0] == 2
+    assert sleep_calls[1] == 6
+    assert sleep_calls[2] == 18
+    assert sleep_calls[3] == 18
+
+
+# ── Test: class 1 network transient — full sequence including 5-minute wait ──
+
+def test_class_1_network_transient_5_minute_wait():
+    """Class 1 (network transient) retries with backoff [2, 4, 8, 300, 30].
+    5 attempts: 3 failures, 5-minute wait, 2 more failures, then halt.
+    Uses a transport that raises ConnectError (class 1) which the classifier
+    maps to NETWORK_TRANSIENT with schedule [2, 4, 8, 300, 30]."""
+    sleep_calls = []
+
+    original_sleep = asyncio.sleep
+    async def mock_sleep(delay):
+        sleep_calls.append(delay)
+
+    # 5 ConnectErrors — all attempts fail, call raises after exhausting budget
+    transport = _ConnectErrorTransport(fail_count=5)
+    call = _make_model_call(
+        "key", "model", "https://openrouter.ai/api/v1",
+        _transport=transport,
+    )
+
+    asyncio.sleep = mock_sleep
+    try:
+        with pytest.raises(_ModelCallFailure) as exc_info:
+            _run(call("system", "user"))
+        assert exc_info.value.failure_class.name == "NETWORK_TRANSIENT"
+    finally:
+        asyncio.sleep = original_sleep
+
+    # Class 1 backoff: [2, 4, 8, 300, 30]. 4 sleeps before the 5th attempt.
+    # After the 5th attempt fails, the loop exhausts and raises.
+    assert len(sleep_calls) == 4
+    assert sleep_calls[0] == 2
+    assert sleep_calls[1] == 4
+    assert sleep_calls[2] == 8
+    assert sleep_calls[3] == 300  # the 5-minute wait
+
+
+# ── Test: start_run hard-blocks on same-model ───────────────────────────────
+
+def test_start_run_hard_blocks_on_same_model():
+    """When writer_model == critic_model, start_run returns HTTP 400."""
+    from unittest.mock import patch, MagicMock
+    from fastapi import HTTPException
+    from app.routers.pipeline_router import start_run, StartRunRequest
+
+    with patch("app.routers.pipeline_router.settings_store") as mock_ss, \
+         patch("app.routers.pipeline_router._resolve_project") as mock_rp:
+
+        mock_ss.get_writer_model.return_value = "openrouter/gpt-4o"
+        mock_ss.get_critic_model.return_value = "openrouter/gpt-4o"
+        mock_rp.return_value = "/tmp/project"
+
+        req = StartRunRequest()
+        current = {"id": "user1"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(start_run("proj1", req, current=current))
+        assert exc_info.value.status_code == 400
+        assert "R3" in exc_info.value.detail
+
+
+# ── Test: auto_run_start hard-blocks on same-model ──────────────────────────
+
+def test_auto_run_start_hard_blocks_on_same_model():
+    """Auto-run returns HTTP 400 when writer_model == critic_model."""
+    from unittest.mock import patch, MagicMock
+    from fastapi import HTTPException
+    from app.routers.pipeline_router import auto_run_start, AutoRunRequest
+
+    with patch("app.routers.pipeline_router.settings_store") as mock_ss, \
+         patch("app.routers.pipeline_router._resolve_project") as mock_rp:
+
+        mock_ss.get_writer_model.return_value = "openrouter/gpt-4o"
+        mock_ss.get_critic_model.return_value = "openrouter/gpt-4o"
+        mock_rp.return_value = "/tmp/project"
+
+        req = AutoRunRequest()
+        current = {"id": "user1"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(auto_run_start("proj1", req, current=current))
+        assert exc_info.value.status_code == 400
+        assert "R3" in exc_info.value.detail
 
 
 if __name__ == "__main__":
