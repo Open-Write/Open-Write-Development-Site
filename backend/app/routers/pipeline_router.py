@@ -212,6 +212,7 @@ class StartRunRequest(BaseModel):
     instructions: str = ""
     rerun_mode: str = "fresh"
     max_chapter_retries: int = 2
+    max_editorial_lock_retries: int = 2
 
 
 class AdvancePhaseRequest(BaseModel):
@@ -244,6 +245,7 @@ class ResetRunRequest(BaseModel):
     phase: str | None = None            # if set: rewind to this phase (preserve all prior work)
     chapter: int | None = None          # if set: rewind to this chapter (only for unit phases)
     max_chapter_retries: int | None = None  # override the revision-round limit
+    max_editorial_lock_retries: int | None = None  # override editorial revision limit
 
 
 class SetOverrideRequest(BaseModel):
@@ -277,6 +279,7 @@ async def start_run(project_id: str, req: StartRunRequest,
                                    instructions=req.instructions,
                                    rerun_mode=req.rerun_mode,
                                    max_chapter_retries=req.max_chapter_retries,
+                                   max_editorial_lock_retries=req.max_editorial_lock_retries,
                                    format=project_format)
     return {
         "status": state.status,
@@ -319,6 +322,8 @@ async def run_state(project_id: str, current=Depends(auth.get_current_user)):
         "revision_chapters": state.revision_chapters,
         "revision_notes": state.revision_notes,
         "max_chapter_retries": state.max_chapter_retries,
+        "editorial_lock_retries": state.editorial_lock_retries,
+        "max_editorial_lock_retries": state.max_editorial_lock_retries,
         "format": state.format,
         "unit_label": cfg.unit_label,
         "unit_label_plural": cfg.unit_label_plural,
@@ -537,7 +542,10 @@ async def reset_run(project_id: str, req: ResetRunRequest,
         # Optionally update the revision-round limit.
         if req.max_chapter_retries is not None:
             state.max_chapter_retries = max(1, req.max_chapter_retries)
-            orchestrator.save_run_state(state)
+        if req.max_editorial_lock_retries is not None:
+            state.max_editorial_lock_retries = max(0, req.max_editorial_lock_retries)
+            state.editorial_lock_retries = 0  # Reset counter when limit changes
+        orchestrator.save_run_state(state)
         return {
             "reset": True,
             "mode": "rewind",
@@ -545,6 +553,8 @@ async def reset_run(project_id: str, req: ResetRunRequest,
             "current_phase_label": orchestrator.PHASE_SPECS[state.current_phase].label,
             "current_unit_index": state.current_unit_index,
             "max_chapter_retries": state.max_chapter_retries,
+            "max_editorial_lock_retries": state.max_editorial_lock_retries,
+            "editorial_lock_retries": state.editorial_lock_retries,
         }
     else:
         # Full reset (existing behavior): delete pipeline_run.json.

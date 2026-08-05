@@ -357,6 +357,8 @@ class RunState:
     revision_chapters: list[int] = field(default_factory=list)  # subset to revise (empty = all)
     revision_notes: str = ""  # user's revision feedback/instructions
     max_chapter_retries: int = 2  # max critic-revision loops per chapter before force-advancing
+    editorial_lock_retries: int = 0  # how many editorial_lock revision rounds have run
+    max_editorial_lock_retries: int = 2  # max editorial revision rounds before force-advancing
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -387,6 +389,8 @@ class RunState:
             revision_chapters=list(d.get("revision_chapters", [])),
             revision_notes=d.get("revision_notes", ""),
             max_chapter_retries=int(d.get("max_chapter_retries", 2)),
+            editorial_lock_retries=int(d.get("editorial_lock_retries", 0)),
+            max_editorial_lock_retries=int(d.get("max_editorial_lock_retries", 2)),
         )
 
 
@@ -841,21 +845,44 @@ def _split_voice_reply(reply: str, project: str) -> dict:
 
 async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelCall) -> dict:
     system = system_prompt_for("editorial_lock")
-    bible = _bible_context(project)
+    cfg = _get_format_config(state.format)
+    bible = _bible_context(project, state.format)
+
+    # If this is a revision round, include the prior editorial feedback so the
+    # model can revise the outline/bible to address the findings.
+    revision_context = ""
+    if state.editorial_lock_retries > 0:
+        prior_report = _read_file(
+            os.path.join("coverage_reports", "editorial_outline_lock.md"), project
+        )
+        if prior_report:
+            revision_context = (
+                f"\n\n--- PREIOR EDITORIAL FEEDBACK (revision round {state.editorial_lock_retries}) ---\n"
+                f"The previous editorial review flagged issues below. Revise the bible/outline "
+                f"to address every finding. Then produce a new editorial review of the revised material.\n\n"
+                f"{prior_report}\n"
+                f"--- END PRIOR FEEDBACK ---\n"
+            )
+
     user = _with_instructions(
-        f"--- BIBLE ---\n{bible}\n--- END ---\n\nReview and lock the outline.",
+        f"--- BIBLE ---\n{bible}\n--- END ---\n\n"
+        f"Review and lock the outline.{revision_context}",
         state,
     )
     reply = await model_call(system, user)
     rel = _write_file(os.path.join("coverage_reports", "editorial_outline_lock.md"),
                       project, reply.strip() + "\n")
+
+    # Parse the verdict from the editorial report.
+    verdict = _parse_editorial_verdict(reply)
+
     # Build the manifest now that the outline is locked.
     outline = _locate_outline(project)
     chapter_count = build_manifest.count_chapters_in_outline(outline) if outline else 0
     manifest_built = None
     if chapter_count > 0:
         manifest = build_manifest.build_manifest(
-            chapter_count, state.project_name, "novel", state.word_floor
+            chapter_count, state.project_name, state.format, state.word_floor
         )
         mpath = os.path.join(project, "state", "completion_manifest.json")
         os.makedirs(os.path.dirname(mpath), exist_ok=True)
@@ -867,7 +894,33 @@ async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelC
             "total_items": sum(len(s["items"]) for s in manifest["sections"]),
             "manifest_path": os.path.relpath(mpath, project),
         }
-    return {"artifact": rel, "manifest": manifest_built, "raw_preview": reply[:400]}
+    return {"artifact": rel, "manifest": manifest_built, "verdict": verdict, "raw_preview": reply[:400]}
+
+
+def _parse_editorial_verdict(text: str) -> str:
+    """Extract ADVANCE/REVISE/PASS verdict from an editorial report.
+
+    Looks for common patterns:
+      - 'VERDICT: REVISE'
+      - '## Verdict\\nADVANCE'
+      - 'verdict is REVISE'
+    Returns "ADVANCE" as the default if no verdict is found (assume good faith).
+    """
+    import re
+    # Look for explicit VERDICT: markers first.
+    m = re.search(r'(?i)verdict\s*[:=]\s*(ADVANCE|REVISE|PASS)', text)
+    if m:
+        return m.group(1).upper()
+    # Look for standalone verdict words near section headers.
+    m = re.search(r'(?i)##\s*verdict\s*\n\s*(ADVANCE|REVISE|PASS)', text)
+    if m:
+        return m.group(1).upper()
+    # Look for "recommend REVISE" or "recommend ADVANCE" style language.
+    m = re.search(r'(?i)recommend\s+(ADVANCE|REVISE|PASS)', text)
+    if m:
+        return m.group(1).upper()
+    # Default: assume ADVANCE if no verdict is explicitly stated.
+    return "ADVANCE"
 
 
 def _locate_outline(project: str) -> Optional[str]:
@@ -1274,7 +1327,7 @@ _EXECUTORS: dict[str, Callable] = {
 def start_run(project: str, project_name: str = "", word_floor: int = 800,
               units: Optional[list[int]] = None, instructions: str = "",
               rerun_mode: str = "fresh", max_chapter_retries: int = 2,
-              format: str = "novel") -> RunState:
+              format: str = "novel", max_editorial_lock_retries: int = 2) -> RunState:
     """Initialize (or reset) a pipeline run. Returns the fresh RunState.
 
     ``rerun_mode`` controls how existing material is handled:
@@ -1298,6 +1351,7 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
         current_phase="bible",
         current_unit_index=0,
         max_chapter_retries=max_chapter_retries,
+        max_editorial_lock_retries=max_editorial_lock_retries,
     )
     # If a manifest already exists, pre-populate the unit list from it.
     manifest_path = os.path.join(project, "state", "completion_manifest.json")
@@ -1428,6 +1482,40 @@ async def _advance_phase_locked(project: str, resolve_call: ModelResolver) -> di
 
     # Record the result.
     _record_result(state, phase, result)
+
+    # ── Post-editorial_lock revision loop ─────────────────────────────────
+    # After the editorial_lock phase, check the verdict. If the editorial says
+    # REVISE, loop back to re-run editorial_lock with the prior feedback so the
+    # bible/outline is revised. This ensures the outline is structurally sound
+    # before committing to per-unit generation.
+    if phase == "editorial_lock":
+        verdict = result.get("verdict", "ADVANCE").upper()
+        if verdict == "REVISE" and state.editorial_lock_retries < state.max_editorial_lock_retries:
+            state.editorial_lock_retries += 1
+            state.current_phase = "editorial_lock"
+            state.last_error = (
+                f"Editorial review says REVISE (round {state.editorial_lock_retries}/{state.max_editorial_lock_retries}). "
+                f"Re-running editorial review with revision feedback."
+            )
+            save_run_state(state)
+            return {
+                "phase": phase,
+                "phase_label": PHASE_SPECS[phase].label,
+                "result": result,
+                "next_phase": "editorial_lock",
+                "next_phase_label": PHASE_SPECS["editorial_lock"].label,
+                "state": state.to_dict(),
+                "retrying": True,
+                "editorial_verdict": verdict,
+                "editorial_round": state.editorial_lock_retries,
+            }
+        elif verdict == "REVISE":
+            # Max rounds exhausted — force advance with a warning.
+            state.last_error = (
+                f"Editorial review still REVISE after {state.max_editorial_lock_retries} rounds. "
+                f"Force-advancing to per-unit generation."
+            )
+            save_run_state(state)
 
     # ── Post-critics revision loop ────────────────────────────────────────
     # After the critics phase, check verdicts immediately. If ANY critic says
@@ -1651,6 +1739,9 @@ async def prepare_rerun(project: str, phase: str, chapter: Optional[int] = None)
         if phase in UNIT_PHASES and chapter is not None:
             if chapter in state.units:
                 state.current_unit_index = state.units.index(chapter)
+        # Reset editorial revision counter when rewinding to editorial_lock.
+        if phase == "editorial_lock":
+            state.editorial_lock_retries = 0
         state.last_error = None
         state.status = "running"
         save_run_state(state)
