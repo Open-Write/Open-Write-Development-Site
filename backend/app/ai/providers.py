@@ -116,12 +116,22 @@ def resolve(model_id: str, providers: list[dict] | None = None) -> ResolvedProvi
             model_name = rest
 
     if provider is None:
+        # Unqualified model id — try to find which provider owns it by
+        # checking each provider's model list. This handles the common case
+        # where the user sets a non-OpenRouter default (e.g. "mimo-v2.5-pro")
+        # without the provider prefix.
+        for p in index.values():
+            p_models = [_extract_model_name(m) for m in p.get("models", [])]
+            if model_name in p_models:
+                provider = p
+                break
+    if provider is None:
+        # Final fallback: OpenRouter (backward compatibility for legacy ids).
         provider = index.get("openrouter")
         if provider is None:
             raise ValueError(
                 "No providers configured. Add a provider in Settings."
             )
-        # Legacy unqualified id -> OpenRouter model.
         model_name = model_id
 
     return ResolvedProvider(
