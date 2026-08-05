@@ -118,7 +118,7 @@ PER_UNIT = "per_unit"
 # Ordered phase keys. Project phases run once; per-unit phases run for each
 # chapter in the manifest scope.
 PROJECT_PHASES = ["bible", "voice", "editorial_lock"]
-UNIT_PHASES = ["architect", "writer", "critics", "reviser", "editorial", "verify_unit"]
+UNIT_PHASES = ["architect", "writer", "critics", "editorial", "verify_unit"]
 CLOSING_PHASES = ["assemble", "adversarial", "finalize"]
 
 ALL_PHASES = PROJECT_PHASES + UNIT_PHASES + CLOSING_PHASES
@@ -204,12 +204,6 @@ PHASE_SPECS: dict[str, PhaseSpec] = {
             "block covering show-don't-tell, voice, palette, continuity, and naturalism, "
             "each with located findings (Line N + quoted span) and a VERDICT."
         ),
-    ),
-    "reviser": PhaseSpec(
-        "reviser", "Reviser (apply edits)", PER_UNIT,
-        rule_file=None,
-        gate_phase=False,
-        fallback_prompt="",
     ),
     "editorial": PhaseSpec(
         "editorial", "Editorial eval (per unit)", PER_UNIT,
@@ -674,6 +668,25 @@ def _apply_user_override(phase: str, chapter: int | None, content: str,
 async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> dict:
     system = system_prompt_for("bible")
     cfg = _get_format_config(state.format)
+    # Override system prompt for non-novel formats.
+    if state.format == "tv":
+        system = (
+            "You are the SHOWRUNNER creating a TV series bible. Produce a series "
+            "concept, world bible, season arc, and per-episode outlines. The outline "
+            "must use '## Episode N' headings. Each episode outline should include "
+            "cold open, act breaks (A/B/C story threads), and tag. Include TV format "
+            "rules covering Fountain markup for television (slug lines, act breaks, "
+            "scene headings). Output files delimited by '---BIBLE-FILE: <path>---' markers."
+        )
+    elif state.format == "screenplay":
+        system = (
+            "You are the SCREENWRITER creating a screenplay bible. Produce a concept, "
+            "character breakdown, scene-by-scene outline, and format rules. The outline "
+            "must use '## Scene N' headings. Include Fountain markup discipline (INT./EXT. "
+            "slug lines, ALL CAPS character names, parentheticals only when functional, "
+            "no camera directions). Output files delimited by '---BIBLE-FILE: <path>---' markers."
+        )
+    cfg = _get_format_config(state.format)
     characters = profile_context.character_context(project, "architect")
     world = profile_context.world_context(project)
     user = _with_instructions(
@@ -1068,6 +1081,24 @@ async def _exec_architect(state: RunState, project: str, model_call: ModelCall) 
     cfg = _get_format_config(state.format)
     chapter = state.units[state.current_unit_index]
     system = system_prompt_for("architect")
+    # For non-novel formats, override the system prompt with format-specific instructions.
+    if state.format == "tv":
+        system = (
+            "You are the EPISODE ARCHITECT for a TV series. Plan a single episode "
+            "in Fountain-friendly detail: break into acts (cold open, act breaks, tag), "
+            "describe A/B/C story threads, character arc progression, and how this "
+            "episode advances the season arc. For each act, list the scenes with "
+            "INT./EXT. locations, which characters appear, and the emotional beats. "
+            "Output a structured plan — not prose."
+        )
+    elif state.format == "screenplay":
+        system = (
+            "You are the SCENE ARCHITECT for a screenplay. Plan a single scene: "
+            "break into beats, describe the visual/emotional arc, dialogue or silence "
+            "architecture, entry/exit points. For each beat, note INT./EXT. location, "
+            "which characters are present, and what the camera sees. "
+            "Output a structured plan — not prose."
+        )
     characters = profile_context.character_context(project, "architect")
     world = profile_context.world_context(project)
     user = _with_instructions(
@@ -1090,6 +1121,25 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
     cfg = _get_format_config(state.format)
     chapter = state.units[state.current_unit_index]
     system = system_prompt_for("writer")
+    # For non-novel formats, override the system prompt to prevent prose output.
+    if state.format == "tv":
+        system = (
+            "You are a TV WRITER writing a television episode in Fountain markup. "
+            "Write ONLY in Fountain screenplay format — no prose narrative. "
+            "Use INT./EXT. slug lines, ALL CAPS character names, dialogue below "
+            "character names, parentheticals only when functional. Include cold open, "
+            "act breaks, and a tag. Do NOT write novel-style prose. Do NOT use "
+            "narrative description — use ACTION lines (present tense, what the camera sees)."
+        )
+    elif state.format == "screenplay":
+        system = (
+            "You are a SCREENWRITER writing a screenplay scene in Fountain markup. "
+            "Write ONLY in Fountain screenplay format — no prose narrative. "
+            "Use INT./EXT. slug lines, ALL CAPS character names, dialogue below "
+            "character names, parentheticals only when functional. "
+            "Do NOT write novel-style prose. Do NOT use narrative description — "
+            "use ACTION lines (present tense, what the camera sees)."
+        )
     plan = _read_file(os.path.join("critic_outputs", f"chapter_{chapter}_plan.md"), project)
     characters = profile_context.character_context(project, "writer")
     world = profile_context.world_context(project)
@@ -1139,7 +1189,10 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
             user = base_user
 
         reply = await model_call(system, user)
-        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, state.word_floor // 2))
+        # Use the format's per-unit word floor, not the project-level word_floor
+        # (which is the total across all units). state.word_floor of 25,000 means
+        # "25,000 words total" — not "25,000 words per chapter/episode."
+        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, cfg.word_floor // 2))
 
         if usable:
             body = strip_artifacts(reply).strip() + "\n"
@@ -1261,108 +1314,6 @@ async def _exec_critics(state: RunState, project: str, model_call: ModelCall) ->
     return {"critics": results, "failures": failures, "chapter": chapter}
 
 
-async def _exec_reviser(state: RunState, project: str, model_call: ModelCall) -> dict:
-    """Reviser phase: parse critic outputs, classify, route, apply edits.
-
-    Gated by settings['reviser_enabled'] (default: false). When off, the
-    phase is skipped entirely and the writer-rerun path is untouched.
-    """
-    from app.settings_store import load_settings
-    settings = load_settings()
-    if not settings.get("reviser_enabled", False):
-        return {"skipped": True, "reason": "reviser_enabled is false"}
-
-    chapter = state.units[state.current_unit_index]
-
-    # Read critic output files for this chapter.
-    from app.pipeline import critics as critics_mod
-    critic_files = []
-    for ctype in (*critics_mod.CRITIC_TYPES, critics_mod.EDITORIAL_TYPE):
-        rel = critics_mod.artifact_relpath(ctype, chapter)
-        full = os.path.join(project, rel)
-        if os.path.isfile(full):
-            try:
-                with open(full, "r", encoding="utf-8-sig") as f:
-                    critic_files.append({
-                        "critic_type": ctype,
-                        "path": rel,
-                        "content": f.read(),
-                    })
-            except Exception:
-                pass
-
-    if not critic_files:
-        return {"skipped": True, "reason": "no critic outputs found", "chapter": chapter}
-
-    # Read the chapter content for quote verification.
-    chapter_rel = _chapter_rel(chapter, project)
-    chapter_content = _read_file(chapter_rel, project) or ""
-
-    # Parse findings from all critic files.
-    from app.pipeline.reviser_tools.finding_parser import extract_findings
-    all_findings = []
-    for cf in critic_files:
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False,
-                                          encoding='utf-8') as tmp:
-            tmp.write(cf["content"])
-            tmp_path = tmp.name
-        try:
-            findings = extract_findings(tmp_path, chapter_content)
-            for f in findings:
-                f.source_file = cf["path"]
-                f.critic_type = cf["critic_type"]
-            all_findings.extend(findings)
-        finally:
-            os.unlink(tmp_path)
-
-    if not all_findings:
-        return {"skipped": True, "reason": "no findings parsed", "chapter": chapter}
-
-    # Classify and dispatch.
-    from app.pipeline.reviser_tools.finding_classifier import classify_finding
-    from app.pipeline.reviser_tools.do_not_edit_detector import detect_decline
-    from app.pipeline.reviser_tools.reviser_router import dispatch_finding
-    from app.pipeline.reviser_tools.null_handler import NullHandler
-
-    dne_count = 0
-    routed_count = 0
-    for f in all_findings:
-        fd = {
-            "chapter": f.chapter, "critic_type": f.critic_type,
-            "num": f.finding_num, "line_start": f.line_start,
-            "line_end": f.line_end, "quoted_text": f.quoted_text,
-            "type": f.finding_type, "severity": f.severity,
-            "is_clean": f.is_clean, "body_preview": f.body_preview,
-            "body_full": f.body_full, "source_file": f.source_file,
-            "format_tag": f.format_tag, "section_id": f.section_id,
-        }
-        c = classify_finding(fd, chapter_content)
-        fd["_classification"] = c
-        fd["_chapter"] = chapter_content
-
-        body = fd.get("body_full") or fd.get("body_preview") or ""
-        det = detect_decline(body, fd.get("quoted_text"), fd.get("line_start"))
-        fd["_do_not_edit"] = det.is_declined
-        if det.is_declined:
-            dne_count += 1
-
-        result = dispatch_finding(fd, fd["_classification"], chapter_content)
-        if result.handler_result is not None:
-            routed_count += 1
-
-    return {
-        "phase": "reviser",
-        "chapter": chapter,
-        "findings_total": len(all_findings),
-        "findings_do_not_edit": dne_count,
-        "findings_routed": routed_count,
-        "handler": "null",
-        "proposed_edits": 0,
-        "skipped": False,
-    }
-
-
 async def _exec_editorial(state: RunState, project: str, model_call: ModelCall) -> dict:
     # The editorial critic is already run inside _exec_critics; this phase is a
     # structural placeholder that confirms the editorial artifact exists. We keep
@@ -1422,7 +1373,6 @@ _EXECUTORS: dict[str, Callable] = {
     "architect": _exec_architect,
     "writer": _exec_writer,
     "critics": _exec_critics,
-    "reviser": _exec_reviser,
     "editorial": _exec_editorial,
     "verify_unit": _exec_verify_unit,
     "assemble": _exec_assemble,
@@ -1499,7 +1449,7 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
 # phases run on the "critic" model (Open-Write A/B: a different model for
 # critics attacks self-recognition bias). verify_unit/finalize make no call.
 AUTHOR_PHASES = {"bible", "voice", "editorial_lock", "architect", "writer",
-                 "reviser", "assemble", "adversarial"}
+                 "assemble", "adversarial"}
 CRITIC_PHASES = {"critics", "editorial"}
 
 
