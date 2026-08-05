@@ -33,6 +33,11 @@ def count_chapters_in_outline(outline_path):
         r'^#\s+Chapter\s+(\d+)',
         r'^##\s+\d+\.',
         r'^###?\s+Chapter\s+(\d+)',
+        # TV / screenplay patterns
+        r'^##\s+Episode\s+(\d+)',
+        r'^##\s+S\d+E(\d+)',
+        r'^##\s+Scene\s+(\d+)',
+        r'^##\s+Act\s+(\d+)',
     ]
     chapters = set()
     for line in text.split("\n"):
@@ -57,31 +62,55 @@ def count_chapters_in_outline(outline_path):
 def build_manifest(chapter_count, project_name="Untitled", project_type="novel", word_floor=800):
     sections = []
 
+    # Format-aware settings
+    if project_type == "tv":
+        unit_label = "episode"
+        unit_dir = "scripts/scenes"
+        unit_ext = ".fountain"
+        unit_prefix = "S01E{:02d}"
+        assembled_path = "scripts/Season_1.fountain"
+        outline_file = "bible/04_season_arc.md"
+    elif project_type == "screenplay":
+        unit_label = "scene"
+        unit_dir = "script/scenes"
+        unit_ext = ".fountain"
+        unit_prefix = "{:02d}"
+        assembled_path = "script/screenplay.fountain"
+        outline_file = "bible/04_outline.md"
+    else:
+        unit_label = "chapter"
+        unit_dir = "manuscript"
+        unit_ext = ".md"
+        unit_prefix = "{:03d}"
+        assembled_path = "manuscript/novel.md"
+        outline_file = "bible/04_outline.md"
+
     pre_items = [
         {"label": "Bible: concept", "path": "bible/01_concept.md", "check": "nonempty"},
-        {"label": "Bible: outline locked", "path": "bible/04_outline.md", "check": "nonempty"},
+        {"label": "Bible: outline locked", "path": outline_file, "check": "nonempty"},
         {"label": "Bible: format rules", "path": "bible/07_format_rules.md", "check": "nonempty"},
         {"label": "Locked voice spec", "check": "glob_count", "pattern": "bible/LOCKED_VOICE_SPEC*", "min_count": 1},
     ]
     sections.append({"name": "Pre-Production", "items": pre_items})
 
     for ch in range(1, chapter_count + 1):
+        prefix = unit_prefix.format(ch)
         ch_items = [
-            {"label": f"Ch{ch} plan", "path": f"critic_outputs/chapter_{ch}_plan.md", "check": "nonempty"},
-            {"label": f"Ch{ch} draft", "check": "word_floor", "path": f"manuscript/{ch:03d}_*.md", "floor": word_floor},
-            {"label": f"Ch{ch} lint pass", "check": "lint_pass", "path": f"manuscript/{ch:03d}_*.md"},
-            {"label": f"Ch{ch} show critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_show*"},
-            {"label": f"Ch{ch} voice critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_voice*"},
-            {"label": f"Ch{ch} palette critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_palette*"},
-            {"label": f"Ch{ch} continuity critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_continuity*"},
-            {"label": f"Ch{ch} naturalism critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_naturalism*"},
-            {"label": f"Ch{ch} editorial substance", "check": "critic_substance", "pattern": f"coverage_reports/editorial_report_ch{ch}*"},
+            {"label": f"{unit_label.capitalize()} {ch} plan", "path": f"critic_outputs/chapter_{ch}_plan.md", "check": "nonempty"},
+            {"label": f"{unit_label.capitalize()} {ch} draft", "check": "word_floor", "path": f"{unit_dir}/{prefix}_*{unit_ext}", "floor": word_floor},
+            {"label": f"{unit_label.capitalize()} {ch} lint pass", "check": "lint_pass", "path": f"{unit_dir}/{prefix}_*{unit_ext}"},
+            {"label": f"{unit_label.capitalize()} {ch} show critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_show*"},
+            {"label": f"{unit_label.capitalize()} {ch} voice critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_voice*"},
+            {"label": f"{unit_label.capitalize()} {ch} palette critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_palette*"},
+            {"label": f"{unit_label.capitalize()} {ch} continuity critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_continuity*"},
+            {"label": f"{unit_label.capitalize()} {ch} naturalism critic substance", "check": "critic_substance", "pattern": f"critic_outputs/chapter_{ch}_naturalism*"},
+            {"label": f"{unit_label.capitalize()} {ch} editorial substance", "check": "critic_substance", "pattern": f"coverage_reports/editorial_report_ch{ch}*"},
         ]
-        sections.append({"name": f"Chapter {ch}", "items": ch_items})
+        sections.append({"name": f"{unit_label.capitalize()} {ch}", "items": ch_items})
 
     post_items = [
         {"label": "Adversarial read substance", "check": "critic_substance", "pattern": "coverage_reports/*adversarial*"},
-        {"label": "Assembly integrity", "check": "assembly_match", "assembled_path": "manuscript/novel.md", "chapter_pattern": "manuscript/*.md"},
+        {"label": "Assembly integrity", "check": "assembly_match", "assembled_path": assembled_path, "chapter_pattern": f"{unit_dir}/*{unit_ext}"},
         {"label": "Callback ledger", "path": "state/callback_ledger.json", "check": "nonempty"},
         {"label": "Convention ledger", "path": "state/convention_ledger.json", "check": "nonempty"},
     ]
