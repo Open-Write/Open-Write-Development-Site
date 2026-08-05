@@ -98,41 +98,56 @@ def resolve(model_id: str, providers: list[dict] | None = None) -> ResolvedProvi
     Resolution order:
       1. If the id starts with a known provider id followed by '/', that
          provider is used and the remainder is the model name.
-      2. Otherwise the whole id is treated as an OpenRouter model name
-         (backward compatibility for legacy unqualified ids).
-
-    ``providers`` is normally loaded from settings; tests may pass an explicit
-    list. Raises ValueError if no provider can be chosen.
+      2. For unqualified ids, check each provider's model list. Prefer
+         configured providers (with API key) over unconfigured ones.
+      3. If no provider owns the model, use the first configured provider
+         and pass the model name through (the remote API will reject it
+         if invalid, giving the user a clear error).
+      4. Final fallback: OpenRouter (backward compatibility).
     """
     index = _provider_index(providers)
     model_id = (model_id or "").strip()
 
     provider = None
     model_name = model_id
+
+    # Step 1: Qualified id (e.g. "mimo/mimo-v2.5-pro")
     if "/" in model_id:
         head, rest = model_id.split("/", 1)
         if head in index:
             provider = index[head]
             model_name = rest
 
-    if provider is None:
-        # Unqualified model id — try to find which provider owns it by
-        # checking each provider's model list. This handles the common case
-        # where the user sets a non-OpenRouter default (e.g. "mimo-v2.5-pro")
-        # without the provider prefix.
+    # Step 2: Unqualified id — scan provider model lists
+    if provider is None and model_id:
+        best_configured = None
+        best_unconfigured = None
         for p in index.values():
             p_models = [_extract_model_name(m) for m in p.get("models", [])]
             if model_name in p_models:
+                if p.get("api_key"):
+                    best_configured = p
+                    break
+                elif best_unconfigured is None:
+                    best_unconfigured = p
+        provider = best_configured or best_unconfigured
+
+    # Step 3: If the matched provider has no API key, try any configured provider
+    if provider is not None and not provider.get("api_key"):
+        for p in index.values():
+            if p.get("api_key"):
+                # Send the model name to a configured provider — the remote
+                # API will return a clear "model not found" if it's wrong.
                 provider = p
                 break
+
+    # Step 4: Fallback to OpenRouter
     if provider is None:
-        # Final fallback: OpenRouter (backward compatibility for legacy ids).
         provider = index.get("openrouter")
         if provider is None:
             raise ValueError(
                 "No providers configured. Add a provider in Settings."
             )
-        model_name = model_id
 
     return ResolvedProvider(
         provider_id=provider["id"],
