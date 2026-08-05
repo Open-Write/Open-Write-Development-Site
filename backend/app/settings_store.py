@@ -48,6 +48,7 @@ DEFAULT_SETTINGS: dict = {
     "model_allowlist": [],
     "model_blocklist": [],
     "model_content_modes": {},
+    "reviser_enabled": False,
     "vault_root": "/home/ubuntu/openwrite_data",
     "theme": "dark",
     "ui_scale": "default",
