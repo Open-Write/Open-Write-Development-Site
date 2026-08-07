@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0a0a0f;
+  color: #e5e5ee;
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a38 transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: #2a2a38; border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-accent-soft text-white hover:bg-accent-dim;
+  }
+  .btn-ghost {
+    @apply btn bg-ink-800 text-gray-200 hover:bg-ink-700 border border-edge;
+  }
+  .btn-danger {
+    @apply btn bg-red-600/80 text-white hover:bg-red-600;
+  }
+  .input {
+    @apply w-full rounded-lg bg-ink-850 border border-edge px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent-soft focus:ring-1 focus:ring-accent-soft;
+  }
+  .card {
+    @apply rounded-xl border border-edge bg-panel;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}
+
+.prose-content {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-family: Georgia, Cambria, serif;
+}
+.prose-content h1, .prose-content h2, .prose-content h3 { font-family: Inter, sans-serif; }
