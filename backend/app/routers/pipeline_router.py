@@ -154,6 +154,10 @@ def _make_model_call(api_key: str, model_name: str, base_url: str):
     from app.ai.openrouter import run_chat
     PIPELINE_CALL_TIMEOUT = 120.0
 
+    # Transient HTTP status codes that should be retried (server-side issues,
+    # model loading, gateway errors). Client errors (4xx) are raised immediately.
+    _RETRYABLE_STATUSES = {502, 503, 504}
+
     async def model_call(system_prompt: str, user_prompt: str) -> str:
         last_exc = None
         for attempt in range(5):
@@ -164,12 +168,19 @@ def _make_model_call(api_key: str, model_name: str, base_url: str):
                     temperature=0.4, base_url=base_url,
                     timeout=PIPELINE_CALL_TIMEOUT,
                 )
-            except httpx.HTTPStatusError:
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in _RETRYABLE_STATUSES:
+                    last_exc = exc
+                    if attempt < 4:
+                        # Exponential backoff: 5s, 10s, 20s, 40s — enough for
+                        # a self-hosted model to finish loading (~60s cold start).
+                        await asyncio.sleep(min(5 * (2 ** attempt), 40))
+                        continue
                 raise
             except httpx.RequestError as exc:
                 last_exc = exc
                 if attempt < 4:
-                    await asyncio.sleep(min(2 * (2 ** attempt), 16))
+                    await asyncio.sleep(min(5 * (2 ** attempt), 40))
         raise last_exc
     return model_call
 
