@@ -30,6 +30,7 @@ from app.routers import (
     admin_router,
     auth_router,
     editorial_router,
+    help_router,
     projects_router,
     settings_router,
     versions_router,
@@ -123,6 +124,7 @@ app.include_router(settings_router.router)
 app.include_router(versions_router.router)
 app.include_router(pipeline_router.router)
 app.include_router(writing_router.router)
+app.include_router(help_router.router)
 
 
 def _serve_file(path: Path, media_type: str | None = None) -> FileResponse | HTMLResponse:

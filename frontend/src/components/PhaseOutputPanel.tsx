@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import MarkdownViewer from "./MarkdownViewer";
 
 interface Entry {
   path: string; label?: string; group?: string; exists: boolean;
-  words?: number | null; mtime?: string;
+  words?: number | null; mtime?: string; chapter?: number | null;
+  critic_type?: string;
 }
 interface Category {
   key: string; label: string; count: number; exists_count: number; entries: Entry[];
@@ -12,13 +13,21 @@ interface Category {
 
 // Browsable catalog of every artifact the pipeline has written to disk, grouped
 // by category. Clicking an existing file loads its content on the right.
-export default function PhaseOutputPanel({ projectId }: { projectId: string }) {
+// Supports search/filter and cross-linking to the Write tab.
+export default function PhaseOutputPanel({
+  projectId,
+  onOpenChapter,
+}: {
+  projectId: string;
+  onOpenChapter?: (chapterNumber: number) => void;
+}) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Entry | null>(null);
   const [content, setContent] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
+  const [search, setSearch] = useState("");
 
   const load = () => {
     setLoading(true);
@@ -42,6 +51,48 @@ export default function PhaseOutputPanel({ projectId }: { projectId: string }) {
       .finally(() => setFileLoading(false));
   };
 
+  // Filter entries by search query (matches labels and paths).
+  const filtered = useMemo(() => {
+    if (!search.trim()) return categories;
+    const q = search.toLowerCase();
+    return categories
+      .map((c) => ({
+        ...c,
+        entries: c.entries.filter(
+          (e) =>
+            (e.label || "").toLowerCase().includes(q) ||
+            e.path.toLowerCase().includes(q)
+        ),
+        exists_count: c.entries.filter(
+          (e) =>
+            e.exists &&
+            ((e.label || "").toLowerCase().includes(q) ||
+              e.path.toLowerCase().includes(q))
+        ).length,
+      }))
+      .filter((c) => c.entries.length > 0);
+  }, [categories, search]);
+
+  // Check if an entry has a chapter number we can cross-link to.
+  const hasChapterLink = (e: Entry) => {
+    if (e.chapter != null && onOpenChapter) return true;
+    // Also try to extract chapter number from label like "Chapter 3 — ..."
+    if (onOpenChapter && e.label) {
+      const m = e.label.match(/chapter\s+(\d+)/i);
+      if (m) return true;
+    }
+    return false;
+  };
+
+  const getChapterNumber = (e: Entry): number | null => {
+    if (e.chapter != null) return e.chapter;
+    if (e.label) {
+      const m = e.label.match(/chapter\s+(\d+)/i);
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  };
+
   if (loading) return <div className="p-6 text-gray-500">Loading outputs…</div>;
 
   return (
@@ -51,30 +102,58 @@ export default function PhaseOutputPanel({ projectId }: { projectId: string }) {
           <h3 className="text-sm font-semibold text-gray-300">Artifacts</h3>
           <button className="btn-ghost !py-1 !px-2 text-xs" onClick={load}>Refresh</button>
         </div>
+
+        {/* Search/filter */}
+        <input
+          className="input"
+          placeholder="Search artifacts…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+
         {error && <div className="rounded-lg bg-red-600/15 px-3 py-2 text-sm text-red-300">{error}</div>}
-        {categories.map((c) => (
+        {filtered.map((c) => (
           <div key={c.key} className="card overflow-hidden">
             <div className="flex items-center justify-between border-b border-edge bg-ink-850 px-4 py-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">{c.label}</span>
-              <span className="text-xs text-gray-500">{c.exists_count}/{c.count}</span>
+              <span className="text-xs text-gray-500">{c.exists_count}/{c.entries.length}</span>
             </div>
             <div className="divide-y divide-edge/60">
               {c.entries.map((e) => (
-                <button
+                <div
                   key={e.path}
-                  onClick={() => open(e)}
-                  disabled={!e.exists}
                   className={[
                     "flex w-full items-center justify-between px-4 py-2 text-left text-xs transition-colors",
                     e.exists ? "hover:bg-ink-800 text-gray-300" : "cursor-default text-gray-600",
                     selected?.path === e.path ? "bg-ink-800 ring-1 ring-inset ring-accent-soft/40" : "",
                   ].join(" ")}
                 >
-                  <span className="truncate">{e.label || e.path.split("/").pop()}</span>
-                  <span className="ml-2 shrink-0 text-gray-500">
-                    {e.exists ? (e.words ? `${e.words.toLocaleString()} w` : "✓") : "—"}
-                  </span>
-                </button>
+                  <button
+                    onClick={() => open(e)}
+                    disabled={!e.exists}
+                    className="flex-1 truncate text-left"
+                  >
+                    {e.label || e.path.split("/").pop()}
+                  </button>
+                  <div className="ml-2 flex shrink-0 items-center gap-2">
+                    {hasChapterLink(e) && (
+                      <button
+                        className="rounded px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft/20 transition-colors"
+                        title={`Open Chapter ${getChapterNumber(e)} in Write tab`}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          const ch = getChapterNumber(e);
+                          if (ch != null && onOpenChapter) onOpenChapter(ch);
+                        }}
+                      >
+                        ↗ Write
+                      </button>
+                    )}
+                    <span className="text-gray-500">
+                      {e.exists ? (e.words ? `${e.words.toLocaleString()} w` : "✓") : "—"}
+                    </span>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -88,6 +167,17 @@ export default function PhaseOutputPanel({ projectId }: { projectId: string }) {
             <>
               <div className="flex shrink-0 items-center gap-2 border-b border-edge bg-ink-850 px-4 py-3">
                 <span className="text-sm font-medium text-gray-200">{selected.label || selected.path}</span>
+                {hasChapterLink(selected) && (
+                  <button
+                    className="rounded-md px-2 py-1 text-xs font-medium text-accent hover:bg-accent-soft/20 transition-colors"
+                    onClick={() => {
+                      const ch = getChapterNumber(selected);
+                      if (ch != null && onOpenChapter) onOpenChapter(ch);
+                    }}
+                  >
+                    Open in Write tab →
+                  </button>
+                )}
                 <span className="ml-auto text-xs text-gray-500">{selected.path}</span>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto p-5">

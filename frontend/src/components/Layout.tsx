@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth";
+import HelpWidget from "./HelpWidget";
 
 // App shell with top navigation. Used by every authenticated page.
 export default function Layout({ children }: { children: ReactNode }) {
@@ -50,6 +51,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-6 py-6">{children}</main>
+      <HelpWidget />
     </div>
   );
 }

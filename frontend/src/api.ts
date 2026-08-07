@@ -247,6 +247,22 @@ export const api = {
   versionHistory: (pid: string, ct: string, chapter: string) =>
     request<{ versions: VersionSummary[] }>(`/versions/${pid}/history/${ct}/${chapter}`),
   versionDetail: (vid: string) => request<VersionDetail>(`/versions/detail/${vid}`),
+  restoreVersion: (pid: string, vid: string) =>
+    request<{ restored: boolean; path: string; word_count: number; new_version_id: string }>(
+      `/versions/${pid}/restore/${vid}`, { method: "POST" }),
+  versionDiff: (vidA: string, vidB: string) =>
+    request<{
+      version_a_id: string; version_b_id: string; content_type: string;
+      chapter_number: number | null;
+      lines: { type: string; old_line?: string; new_line?: string }[];
+      stats: { insertions: number; deletions: number; unchanged: number };
+    }>(`/versions/diff/${vidA}/${vidB}`),
+
+  // Help
+  helpChat: (body: {
+    messages: { role: string; content: string }[];
+  }) => request<{ reply: string; model_used: string }>(
+    `/help/chat`, { method: "POST", body }),
 
   // Writing
   listChapters: (pid: string) => request<{ chapters: Chapter[] }>(`/writing/${pid}/chapters`),

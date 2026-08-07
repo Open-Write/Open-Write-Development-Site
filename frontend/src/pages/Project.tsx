@@ -27,6 +27,8 @@ export default function Project() {
   const [state, setState] = useState<RunState | null>(null);
   const [tab, setTab] = useState<Tab>("pipeline");
   const [error, setError] = useState("");
+  // Cross-link target: when set, the Write tab opens this chapter automatically.
+  const [targetChapter, setTargetChapter] = useState<number | null>(null);
 
   // ── Server-side auto-run state (driven by 3s polling) ────────────────────
   const [autoRunning, setAutoRunning] = useState(false);
@@ -162,8 +164,19 @@ export default function Project() {
           }}
         />
       )}
-      {tab === "write" && <WritingEditor projectId={id} />}
-      {tab === "outputs" && <PhaseOutputPanel projectId={id} />}
+      {tab === "write" && (
+        <WritingEditor
+          projectId={id}
+          initialChapter={targetChapter}
+          onChapterOpened={() => setTargetChapter(null)}
+        />
+      )}
+      {tab === "outputs" && (
+        <PhaseOutputPanel
+          projectId={id}
+          onOpenChapter={(ch) => { setTargetChapter(ch); setTab("write"); }}
+        />
+      )}
       {tab === "versions" && <VersionHistory projectId={id} />}
     </Layout>
   );
