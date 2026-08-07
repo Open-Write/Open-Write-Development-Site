@@ -48,7 +48,6 @@ DEFAULT_SETTINGS: dict = {
     "model_allowlist": [],
     "model_blocklist": [],
     "model_content_modes": {},
-    "reviser_enabled": False,
     "vault_root": "/home/ubuntu/openwrite_data",
     "theme": "dark",
     "ui_scale": "default",
@@ -67,6 +66,7 @@ PROVIDER_SEEDS = [
     {"id": "glm", "label": "GLM / Z.AI (Pay-as-you-go)", "base_url": "https://open.bigmodel.cn/api/paas/v4", "api_key": "", "models": ["glm-4-plus", "glm-4", "glm-4-flash", "glm-4.6", "glm-4.6-flash"]},
     {"id": "zai", "label": "Z.AI (Coding Plan — Singapore)", "base_url": "https://api.z.ai/api/coding/paas/v4", "api_key": "", "models": ["glm-5.2", "glm-5.2-flash", "glm-5.1", "glm-5.1-flash", "glm-4.6", "glm-4.6-flash", "glm-4.6-thinking", "glm-z1-flash", "glm-4-flashx"]},
     {"id": "mimo", "label": "Xiaomi MiMo (Singapore)", "base_url": "https://token-plan-sgp.xiaomimimo.com/v1", "api_key": "", "models": ["mimo-v2.5-pro", "mimo-v2.5"]},
+    {"id": "bonsai", "label": "Bonsai-8B (Self-hosted)", "base_url": "https://bonsai-llm-production.up.railway.app/v1", "api_key": "open-write", "models": ["bonsai-8b"]},
     {"id": "mistral", "label": "Mistral", "base_url": "https://api.mistral.ai/v1", "api_key": "", "models": ["mistral-large-latest", "mistral-small-latest"]},
     {"id": "groq", "label": "Groq", "base_url": "https://api.groq.com/openai/v1", "api_key": "", "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]},
     {"id": "xai", "label": "xAI", "base_url": "https://api.x.ai/v1", "api_key": "", "models": ["grok-3", "grok-3-mini"]},
@@ -194,21 +194,7 @@ def get_writer_model() -> str:
 
 def get_critic_model() -> str:
     settings = load_settings()
-    explicit = settings.get("critic_model", "")
-    if explicit:
-        return explicit
-    # If critic_model is unset, try to pick a distinct model from the user's
-    # configured providers. This avoids R3 blocks for users who only set a
-    # default model.
-    writer = get_writer_model()
-    if writer:
-        for p in get_providers():
-            for m in p.get("models", []):
-                candidate = f"{p['id']}/{m}" if "/" not in m else m
-                if candidate != writer:
-                    return candidate
-    # No distinct model available — fall back to default_model (will trigger R3).
-    return settings.get("default_model", DEFAULT_SETTINGS["default_model"])
+    return settings.get("critic_model", "") or settings.get("default_model", DEFAULT_SETTINGS["default_model"])
 
 
 def get_model_for_phase(phase: str) -> str:
