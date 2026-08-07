@@ -327,14 +327,33 @@ async def run_chat(
         chat_headers["X-Title"]      = "Open-Write"
 
     try:
-        async with httpx.AsyncClient(timeout=timeout or REQUEST_TIMEOUT) as client:
-            response = await client.post(
+        # Use streaming to avoid Railway's 300s proxy timeout. Self-hosted
+        # models on CPU can take 5+ minutes per request — streaming keeps the
+        # connection alive by sending tokens as they're generated.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=timeout or REQUEST_TIMEOUT, write=30, pool=30)) as client:
+            async with client.stream(
+                "POST",
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers=chat_headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
+                json={**payload, "stream": True},
+            ) as response:
+                response.raise_for_status()
+                chunks: list[str] = []
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            chunks.append(content)
+                    except (json.JSONDecodeError, IndexError, KeyError):
+                        continue
+                data = {"choices": [{"message": {"content": "".join(chunks)}}]}
     except httpx.TimeoutException:
         call_status = "timeout"
         raise
@@ -355,7 +374,6 @@ async def run_chat(
     # a string — passing None crashes with "expected string or bytes-like
     # object, got 'NoneType'".
     if raw_reply is None:
-        log.warning("run_chat model=%s content=null — possible refusal or truncation", model_id)
         raw_reply = ""
 
     # Normalize the reply. Under the Open-Write advisory policy em/en dashes
