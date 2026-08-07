@@ -152,7 +152,9 @@ def _resolve_call_model(qualified: str | None):
 
 def _make_model_call(api_key: str, model_name: str, base_url: str):
     from app.ai.openrouter import run_chat
-    PIPELINE_CALL_TIMEOUT = 120.0
+    # Self-hosted models on CPU need much longer timeouts than cloud APIs.
+    # Bonsai-8B on Railway CPU can take 5-10 minutes for a full phase output.
+    PIPELINE_CALL_TIMEOUT = 600.0
 
     # Transient HTTP status codes that should be retried (server-side issues,
     # model loading, gateway errors). Client errors (4xx) are raised immediately.
