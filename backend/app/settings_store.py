@@ -72,7 +72,6 @@ PROVIDER_SEEDS = [
     {"id": "glm", "label": "GLM / Z.AI (Pay-as-you-go)", "base_url": "https://open.bigmodel.cn/api/paas/v4", "api_key": "", "models": ["glm-4-plus", "glm-4", "glm-4-flash", "glm-4.6", "glm-4.6-flash"]},
     {"id": "zai", "label": "Z.AI (Coding Plan — Singapore)", "base_url": "https://api.z.ai/api/coding/paas/v4", "api_key": "", "models": ["glm-5.2", "glm-5.2-flash", "glm-5.1", "glm-5.1-flash", "glm-4.6", "glm-4.6-flash", "glm-4.6-thinking", "glm-z1-flash", "glm-4-flashx"]},
     {"id": "mimo", "label": "Xiaomi MiMo (Singapore)", "base_url": "https://token-plan-sgp.xiaomimimo.com/v1", "api_key": "", "models": ["mimo-v2.5-pro", "mimo-v2.5"]},
-    {"id": "bonsai", "label": "Bonsai-8B (Self-hosted)", "base_url": "https://bonsai-llm-production.up.railway.app/v1", "api_key": "open-write", "models": ["bonsai-8b"]},
     {"id": "mistral", "label": "Mistral", "base_url": "https://api.mistral.ai/v1", "api_key": "", "models": ["mistral-large-latest", "mistral-small-latest"]},
     {"id": "groq", "label": "Groq", "base_url": "https://api.groq.com/openai/v1", "api_key": "", "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]},
     {"id": "xai", "label": "xAI", "base_url": "https://api.x.ai/v1", "api_key": "", "models": ["grok-3", "grok-3-mini"]},
