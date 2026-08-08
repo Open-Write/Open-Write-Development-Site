@@ -20,8 +20,14 @@ from __future__ import annotations
 
 import contextvars
 import json
+import os
 
 from app import db
+
+# Server-side DeepSeek API key — injected into all users' providers so they
+# can use the service without providing their own key. Set via the
+# DEEPSEEK_API_KEY environment variable on Railway.
+_DEEPSEEK_SERVER_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 
 # Per-request holder of the current user's raw settings dict (or None).
 _current_settings: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
@@ -35,10 +41,10 @@ _current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # ── Defaults ─────────────────────────────────────────────────────────────────
 DEFAULT_SETTINGS: dict = {
     "openrouter_api_key": "",
-    "default_model": "",
+    "default_model": "deepseek/deepseek-v4-flash",
     "providers": [],
-    "writer_model": "",
-    "critic_model": "",
+    "writer_model": "deepseek/deepseek-v4-flash",
+    "critic_model": "deepseek/deepseek-v4-flash",
     "model_routing": {},
     "planner_model": "",
     "content_mode": "general",
@@ -48,7 +54,7 @@ DEFAULT_SETTINGS: dict = {
     "model_allowlist": [],
     "model_blocklist": [],
     "model_content_modes": {},
-    "vault_root": "/home/ubuntu/openwrite_data",
+    "vault_root": "/data/openwrite_data",
     "theme": "dark",
     "ui_scale": "default",
     "writing_skill_level": "novice",
@@ -62,7 +68,7 @@ PROVIDER_SEEDS = [
     {"id": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "api_key": "", "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o4-mini"]},
     {"id": "anthropic", "label": "Anthropic", "base_url": "https://api.anthropic.com/v1", "api_key": "", "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"]},
     {"id": "google", "label": "Google AI", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "", "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]},
-    {"id": "deepseek", "label": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api_key": "", "models": ["deepseek-chat", "deepseek-reasoner"]},
+    {"id": "deepseek", "label": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api_key": "", "models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
     {"id": "glm", "label": "GLM / Z.AI (Pay-as-you-go)", "base_url": "https://open.bigmodel.cn/api/paas/v4", "api_key": "", "models": ["glm-4-plus", "glm-4", "glm-4-flash", "glm-4.6", "glm-4.6-flash"]},
     {"id": "zai", "label": "Z.AI (Coding Plan — Singapore)", "base_url": "https://api.z.ai/api/coding/paas/v4", "api_key": "", "models": ["glm-5.2", "glm-5.2-flash", "glm-5.1", "glm-5.1-flash", "glm-4.6", "glm-4.6-flash", "glm-4.6-thinking", "glm-z1-flash", "glm-4-flashx"]},
     {"id": "mimo", "label": "Xiaomi MiMo (Singapore)", "base_url": "https://token-plan-sgp.xiaomimimo.com/v1", "api_key": "", "models": ["mimo-v2.5-pro", "mimo-v2.5"]},
@@ -171,6 +177,11 @@ def get_providers() -> list[dict]:
         for p in providers:
             if p["id"] == "openrouter" and not p.get("api_key"):
                 p["api_key"] = legacy_key
+    # Inject server-side DeepSeek key if the user hasn't set their own.
+    if _DEEPSEEK_SERVER_KEY:
+        for p in providers:
+            if p["id"] == "deepseek" and not p.get("api_key"):
+                p["api_key"] = _DEEPSEEK_SERVER_KEY
     return providers
 
 
