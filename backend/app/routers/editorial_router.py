@@ -343,12 +343,12 @@ def _run_model(system: str, user: str, api_key: str, model_name: str, base_url: 
     )
 
 
-async def _run_model_async(system: str, user: str, api_key: str, model_name: str, base_url: str) -> str:
+async def _run_model_async(system: str, user: str, api_key: str, model_name: str, base_url: str, step: str = "") -> str:
     from app.ai.openrouter import run_chat
     return await run_chat(
         api_key=api_key, model_id=model_name, base_url=base_url,
         system_prompt=system, messages=[{"role": "user", "content": user}],
-        temperature=0.4,
+        temperature=0.4, pipeline_step=step,
     )
 
 

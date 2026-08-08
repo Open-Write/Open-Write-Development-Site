@@ -9,7 +9,7 @@
 # One API key gives access to many models from different providers
 # (OpenAI, Anthropic, Mistral, etc.). This lets Open-Write route requests
 # to different models based on task type and content mode without requiring
-# the user to hold multiple API keys.
+# the user to hold their own API keys.
 #
 # API docs: https://openrouter.ai/docs
 
@@ -32,6 +32,38 @@ REQUEST_TIMEOUT = 180.0
 # elapsed time so timeouts can be correlated with payload bulk or specific
 # models. Logs land in the backend console (uvicorn captures stdout/stderr).
 log = logging.getLogger(__name__)
+
+# DeepSeek pricing per million tokens (verify against
+# https://api-docs.deepseek.com/quick_start/pricing).
+# Cache hit input is ~1/50th of cache miss input.
+_DEEPSEEK_PRICING = {
+    "deepseek-v4-flash": {"cache_hit": 0.0028, "cache_miss": 0.14, "output": 0.28},
+    "deepseek-v4-pro":   {"cache_hit": 0.007,  "cache_miss": 0.35, "output": 0.70},
+}
+
+# Accumulated cache metrics per step (for the summary report).
+# Key: (pipeline_step_name, model). Value: list of dicts.
+_cache_metrics: list[dict] = []
+
+
+def get_cache_metrics() -> list[dict]:
+    """Return accumulated cache metrics and clear the buffer."""
+    global _cache_metrics
+    out = list(_cache_metrics)
+    _cache_metrics = []
+    return out
+
+
+def _estimate_cost(model: str, cache_hit: int, cache_miss: int, completion: int) -> float:
+    """Estimate cost in USD for a DeepSeek API call."""
+    pricing = _DEEPSEEK_PRICING.get(model)
+    if not pricing:
+        return 0.0
+    return (
+        cache_hit / 1e6 * pricing["cache_hit"]
+        + cache_miss / 1e6 * pricing["cache_miss"]
+        + completion / 1e6 * pricing["output"]
+    )
 
 
 async def list_models(api_key: str, base_url: str = OPENROUTER_BASE) -> list[dict]:
@@ -281,19 +313,16 @@ async def run_chat(
     temperature: float | None = None,
     base_url: str = OPENROUTER_BASE,
     timeout: float | None = None,
+    pipeline_step: str = "",
 ) -> str:
     """
     Send a multi-turn chat completion request to OpenRouter and return
     the assistant's reply as a plain string.
 
-    Used by the Profile Builder chat panel, where the writer has a
-    back-and-forth conversation about a profile.
+    Used by the pipeline and editorial review for all LLM calls.
 
-    `messages` is a list of {"role": "user"|"assistant", "content": str}
-    dicts in chronological order. The system prompt is always prepended.
-
-    Unlike run_completion(), we return the raw text (not parsed JSON)
-    because profile chat replies are conversational, not structured data.
+    ``pipeline_step`` is an optional label (e.g. "bible", "writer", "critics")
+    used for cache-hit logging. If empty, no cache metrics are recorded.
     """
     from app.ai.sanitizer import sanitize_chat
 
@@ -310,8 +339,6 @@ async def run_chat(
         payload["temperature"] = temperature
 
     # --- Observability: same pattern as run_completion ---
-    # Sum all message lengths (system + every turn) for a true payload size
-    # since chat conversations grow each turn.
     prompt_chars = len(system_prompt) + sum(len(m.get("content", "")) for m in messages)
     start_time   = time.monotonic()
     call_status  = "ok"
@@ -326,10 +353,12 @@ async def run_chat(
         chat_headers["HTTP-Referer"] = "https://openwrite.app"
         chat_headers["X-Title"]      = "Open-Write"
 
+    # Cache metrics (populated from streaming usage if available).
+    usage_data: dict | None = None
+
     try:
-        # Use streaming to avoid Railway's 300s proxy timeout. Self-hosted
-        # models on CPU can take 5+ minutes per request — streaming keeps the
-        # connection alive by sending tokens as they're generated.
+        # Use streaming to avoid Railway's 300s proxy timeout and to capture
+        # DeepSeek's per-request cache hit/miss tokens (sent in the last chunk).
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=timeout or REQUEST_TIMEOUT, write=30, pool=30)) as client:
             async with client.stream(
                 "POST",
@@ -347,6 +376,9 @@ async def run_chat(
                         break
                     try:
                         chunk = json.loads(data)
+                        # Capture usage from the final chunk (DeepSeek includes it).
+                        if "usage" in chunk and chunk["usage"]:
+                            usage_data = chunk["usage"]
                         delta = chunk.get("choices", [{}])[0].get("delta", {})
                         content = delta.get("content")
                         if content:
@@ -362,10 +394,36 @@ async def run_chat(
         raise
     finally:
         elapsed = time.monotonic() - start_time
+
+        # Extract cache metrics from DeepSeek usage if available.
+        cache_hit  = (usage_data or {}).get("prompt_cache_hit_tokens", 0)
+        cache_miss = (usage_data or {}).get("prompt_cache_miss_tokens", 0)
+        prompt_tok = (usage_data or {}).get("prompt_tokens", 0)
+        comp_tok   = (usage_data or {}).get("completion_tokens", 0)
+        hit_rate   = (cache_hit / prompt_tok * 100) if prompt_tok else 0.0
+        cost       = _estimate_cost(model_id, cache_hit, cache_miss, comp_tok)
+
         log.info(
-            "run_chat model=%s prompt_chars=%d turns=%d elapsed=%.2fs status=%s",
-            model_id, prompt_chars, len(messages), elapsed, call_status,
+            "run_chat model=%s step=%s prompt_chars=%d turns=%d elapsed=%.2fs status=%s "
+            "prompt_tokens=%d cache_hit=%d cache_miss=%d hit_rate=%.1f%% completion=%d cost=$%.6f",
+            model_id, pipeline_step or "(none)", prompt_chars, len(messages), elapsed,
+            call_status, prompt_tok, cache_hit, cache_miss, hit_rate, comp_tok, cost,
         )
+
+        # Accumulate for the per-step summary report.
+        if pipeline_step and (prompt_tok > 0 or call_status != "ok"):
+            _cache_metrics.append({
+                "step": pipeline_step,
+                "model": model_id,
+                "prompt_tokens": prompt_tok,
+                "cache_hit_tokens": cache_hit,
+                "cache_miss_tokens": cache_miss,
+                "completion_tokens": comp_tok,
+                "hit_rate_pct": round(hit_rate, 1),
+                "cost_usd": round(cost, 6),
+                "elapsed_s": round(elapsed, 2),
+                "status": call_status,
+            })
 
     raw_reply = data["choices"][0]["message"]["content"]
 

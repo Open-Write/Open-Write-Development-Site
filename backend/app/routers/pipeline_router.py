@@ -150,10 +150,9 @@ def _resolve_call_model(qualified: str | None):
     return resolved.api_key, resolved.model_name, resolved.base_url
 
 
-def _make_model_call(api_key: str, model_name: str, base_url: str):
+def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: str = ""):
     from app.ai.openrouter import run_chat
     # Self-hosted models on CPU need much longer timeouts than cloud APIs.
-    # Bonsai-8B on Railway CPU can take 5-10 minutes for a full phase output.
     PIPELINE_CALL_TIMEOUT = 600.0
 
     # Transient HTTP status codes that should be retried (server-side issues,
@@ -169,13 +168,12 @@ def _make_model_call(api_key: str, model_name: str, base_url: str):
                     [{"role": "user", "content": user_prompt}],
                     temperature=0.4, base_url=base_url,
                     timeout=PIPELINE_CALL_TIMEOUT,
+                    pipeline_step=step_name,
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in _RETRYABLE_STATUSES:
                     last_exc = exc
                     if attempt < 4:
-                        # Exponential backoff: 5s, 10s, 20s, 40s — enough for
-                        # a self-hosted model to finish loading (~60s cold start).
                         await asyncio.sleep(min(5 * (2 ** attempt), 40))
                         continue
                 raise
@@ -201,12 +199,12 @@ def _build_phase_resolver():
     def _resolve(phase: str):
         model_id = settings_store.get_model_for_phase(phase)
         key, name, base = _get_info(model_id)
-        call = _make_model_call(key, name, base)
+        call = _make_model_call(key, name, base, step_name=phase)
         if phase in ("critics", "editorial"):
             author_id = settings_store.get_writer_model()
             if model_id != author_id:
                 a_key, a_name, a_base = _get_info(author_id)
-                author_call = _make_model_call(a_key, a_name, a_base)
+                author_call = _make_model_call(a_key, a_name, a_base, step_name=f"{phase}-fallback")
 
                 async def _fallback(sys_p: str, usr_p: str) -> str:
                     try:
@@ -274,6 +272,54 @@ class RerunPhaseRequest(BaseModel):
 class StartRevisionRequest(BaseModel):
     chapters: list[int]
     revision_notes: str = ""
+
+
+# ── Cache metrics endpoint ──────────────────────────────────────────────────
+@router.get("/cache-metrics")
+async def cache_metrics(current=Depends(auth.get_current_user)):
+    """Return per-step cache hit/miss metrics from recent LLM calls."""
+    from app.ai.openrouter import get_cache_metrics
+    metrics = get_cache_metrics()
+    if not metrics:
+        return {"metrics": [], "summary": "No recent calls."}
+    # Aggregate by step.
+    by_step: dict[str, dict] = {}
+    for m in metrics:
+        step = m["step"]
+        if step not in by_step:
+            by_step[step] = {"step": step, "calls": 0, "prompt_tokens": 0,
+                             "cache_hit": 0, "cache_miss": 0, "completion": 0,
+                             "cost_usd": 0.0}
+        s = by_step[step]
+        s["calls"] += 1
+        s["prompt_tokens"] += m.get("prompt_tokens", 0)
+        s["cache_hit"] += m.get("cache_hit_tokens", 0)
+        s["cache_miss"] += m.get("cache_miss_tokens", 0)
+        s["completion"] += m.get("completion_tokens", 0)
+        s["cost_usd"] += m.get("cost_usd", 0.0)
+    summary = []
+    total_hit = sum(s["cache_hit"] for s in by_step.values())
+    total_prompt = sum(s["prompt_tokens"] for s in by_step.values())
+    total_cost = sum(s["cost_usd"] for s in by_step.values())
+    for s in by_step.values():
+        hit_rate = (s["cache_hit"] / s["prompt_tokens"] * 100) if s["prompt_tokens"] else 0
+        summary.append({
+            **s,
+            "hit_rate_pct": round(hit_rate, 1),
+            "cost_usd": round(s["cost_usd"], 6),
+        })
+    overall_hit = (total_hit / total_prompt * 100) if total_prompt else 0
+    return {
+        "metrics": summary,
+        "overall": {
+            "total_calls": len(metrics),
+            "total_prompt_tokens": total_prompt,
+            "total_cache_hit": total_hit,
+            "total_cache_miss": total_prompt - total_hit,
+            "overall_hit_rate_pct": round(overall_hit, 1),
+            "total_cost_usd": round(total_cost, 6),
+        },
+    }
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────

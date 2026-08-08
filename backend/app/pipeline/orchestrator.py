@@ -447,6 +447,68 @@ def system_prompt_for(phase_key: str) -> str:
     return spec.fallback_prompt
 
 
+# ── Cache-optimized prompt assembly ─────────────────────────────────────────
+# DeepSeek caches prompt prefixes automatically. To maximize cache hits:
+# 1. Use ONE global system prompt for ALL phases (the prefix starts at token 0).
+# 2. Put stable content (bible, voice, outline) at the start of every user
+#    message, identical across calls.
+# 3. Put step-specific instructions AFTER the stable prefix.
+#
+# Cost impact: cache-hit input = $0.0028/M, cache-miss = $0.14/M.
+# A uniform prefix saves ~50x on repeated context.
+
+_GLOBAL_SYSTEM_PROMPT = (
+    "You are a professional creative writer and editor working within an "
+    "autonomous writing pipeline. You follow instructions precisely and produce "
+    "high-quality output. Respond only with the requested content — no "
+    "meta-commentary, explanations, or preamble unless explicitly asked."
+)
+
+
+def _build_cache_prefix(state: RunState, project: str) -> str:
+    """Build the stable context prefix shared across all pipeline calls.
+
+    Ordered from most-stable to least-stable. Everything above the
+    step-specific instruction should be byte-identical across calls within
+    a single pipeline run, so DeepSeek's cache hits on the full prefix.
+    """
+    cfg = _get_format_config(state.format)
+    parts: list[str] = []
+
+    # Bible files (stable for the whole run).
+    for rel in ("bible/01_concept.md", cfg.outline_file, "bible/07_format_rules.md"):
+        text = _read_file(rel, project)
+        if text:
+            parts.append(f"--- {rel} ---\n{text}\n--- END ---")
+
+    # Voice spec (stable once locked).
+    voice = _read_file("bible/LOCKED_VOICE_SPEC.md", project)
+    if voice:
+        parts.append(f"--- VOICE SPEC ---\n{voice}\n--- END ---")
+
+    # Character profiles (stable or rarely changing).
+    characters = profile_context.character_context(project, "writer")
+    if characters:
+        parts.append(f"--- CHARACTER PROFILES ---\n{characters}\n--- END ---")
+
+    # World context (stable).
+    world = profile_context.world_context(project)
+    if world:
+        parts.append(f"--- WORLD CONTEXT ---\n{world}\n--- END ---")
+
+    # Manuscript so far (append-only — new chapters added to the end).
+    # This grows but the prefix stays valid as long as earlier text isn't modified.
+    manuscript_parts: list[str] = []
+    for ch in state.units[: state.current_unit_index]:
+        text = _read_file(_unit_rel(ch, state, project), project)
+        if text:
+            manuscript_parts.append(f"--- {cfg.unit_label.capitalize()} {ch} ---\n{text}\n--- END ---")
+    if manuscript_parts:
+        parts.append(f"--- MANUSCRIPT SO FAR ---\n{''.join(manuscript_parts)}\n--- END ---")
+
+    return "\n\n".join(parts)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _read_file(rel: str, project: str) -> str:
@@ -666,9 +728,9 @@ def _apply_user_override(phase: str, chapter: int | None, content: str,
 # Each returns a dict: {artifact, gate, meta...}
 
 async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> dict:
-    system = system_prompt_for("bible")
     cfg = _get_format_config(state.format)
-    # Override system prompt for non-novel formats.
+    # Bible is the first phase — no stable prefix yet (no bible exists).
+    # Use format-specific system prompt for this phase only.
     if state.format == "tv":
         system = (
             "You are the SHOWRUNNER creating a TV series bible. Produce a series "
@@ -686,7 +748,8 @@ async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> d
             "slug lines, ALL CAPS character names, parentheticals only when functional, "
             "no camera directions). Output files delimited by '---BIBLE-FILE: <path>---' markers."
         )
-    cfg = _get_format_config(state.format)
+    else:
+        system = system_prompt_for("bible")
     characters = profile_context.character_context(project, "architect")
     world = profile_context.world_context(project)
     user = _with_instructions(
@@ -702,11 +765,7 @@ async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> d
     )
     reply = await model_call(system, user)
     artifacts = _split_bible_reply(reply, project)
-    # Sync the outline to notes/outline.md so the Storythread OutlinePlanner
-    # sees it immediately (unified outline location).
     _sync_outline_to_ui(project)
-    # Generate skeleton character profiles from the concept so the ProfileBuilder
-    # has something to work with from the start.
     _generate_skeleton_profiles(project)
     return {"artifacts": artifacts, "raw_preview": reply[:400]}
 
@@ -1080,37 +1139,44 @@ def _prior_chapter_tail(project: str, chapter_number: int) -> str:
 async def _exec_architect(state: RunState, project: str, model_call: ModelCall) -> dict:
     cfg = _get_format_config(state.format)
     chapter = state.units[state.current_unit_index]
-    system = system_prompt_for("architect")
-    # For non-novel formats, override the system prompt with format-specific instructions.
+    # Use global system prompt + stable cache prefix for maximum cache hits.
+    prefix = _build_cache_prefix(state, project)
+    step_instruction = cfg.architect_prompt_hint
     if state.format == "tv":
-        system = (
-            "You are the EPISODE ARCHITECT for a TV series. Plan a single episode "
-            "in Fountain-friendly detail: break into acts (cold open, act breaks, tag), "
-            "describe A/B/C story threads, character arc progression, and how this "
-            "episode advances the season arc. For each act, list the scenes with "
-            "INT./EXT. locations, which characters appear, and the emotional beats. "
-            "Output a structured plan — not prose."
+        step_instruction = (
+            "You are the EPISODE ARCHITECT. Plan this episode in Fountain-friendly detail: "
+            "break into acts (cold open, act breaks, tag), describe A/B/C story threads, "
+            "character arc progression, and how this episode advances the season arc. "
+            "For each act, list the scenes with INT./EXT. locations, which characters appear, "
+            "and the emotional beats. Output a structured plan — not prose.\n\n"
+            + step_instruction
         )
     elif state.format == "screenplay":
-        system = (
-            "You are the SCENE ARCHITECT for a screenplay. Plan a single scene: "
-            "break into beats, describe the visual/emotional arc, dialogue or silence "
-            "architecture, entry/exit points. For each beat, note INT./EXT. location, "
-            "which characters are present, and what the camera sees. "
-            "Output a structured plan — not prose."
+        step_instruction = (
+            "You are the SCENE ARCHITECT. Plan this scene: break into beats, describe the "
+            "visual/emotional arc, dialogue or silence architecture, entry/exit points. "
+            "For each beat, note INT./EXT. location, which characters are present, and what "
+            "the camera sees. Output a structured plan — not prose.\n\n"
+            + step_instruction
         )
-    characters = profile_context.character_context(project, "architect")
-    world = profile_context.world_context(project)
+    else:
+        step_instruction = (
+            "You are the CHAPTER ARCHITECT. Plan this chapter: break into scenes, describe "
+            "the emotional arc, what each character wants, and how the chapter advances the story. "
+            "Output a structured plan — not prose.\n\n"
+            + step_instruction
+        )
     user = _with_instructions(
-        f"--- BIBLE ---\n{_bible_context(project, state.format)}\n--- END ---\n\n"
-        f"{characters + chr(10)*2 if characters else ''}"
-        f"{world + chr(10)*2 if world else ''}"
-        f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n{_prior_chapter_tail(project, chapter)}\n--- END ---\n\n"
-        f"Plan {cfg.unit_label} {chapter} now."
-        f"{chr(10)*2}{cfg.architect_prompt_hint}",
+        f"{prefix}\n\n"
+        f"--- STEP: PLAN {cfg.unit_label.upper()} {chapter} ---\n"
+        f"{step_instruction}\n"
+        f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n"
+        f"{_prior_chapter_tail(project, chapter)}\n"
+        f"--- END ---\n\n"
+        f"Plan {cfg.unit_label} {chapter} now.",
         state,
     )
-    reply = await model_call(system, user)
+    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
     rel = _write_file(os.path.join("critic_outputs", f"chapter_{chapter}_plan.md"),
                       project, reply.strip() + "\n")
     _generate_scene_summaries(project, chapter)
