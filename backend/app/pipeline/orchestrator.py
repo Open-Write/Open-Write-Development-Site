@@ -803,10 +803,10 @@ def _split_bible_reply(reply: str, project: str) -> list[str]:
 
 
 async def _exec_voice(state: RunState, project: str, model_call: ModelCall) -> dict:
-    system = system_prompt_for("voice")
-    bible = _bible_context(project)
+    prefix = _build_cache_prefix(state, project)
     user = _with_instructions(
-        f"--- BIBLE ---\n{bible}\n--- END ---\n\n"
+        f"{prefix}\n\n"
+        "--- STEP: VOICE EXPERIMENT ---\n"
         "Run a voice experiment and lock the winner. Produce THREE delimited "
         "sections so each can be filed separately:\n\n"
         "1. Candidate voices — for EACH candidate voice (aim for 5 distinct "
@@ -829,7 +829,7 @@ async def _exec_voice(state: RunState, project: str, model_call: ModelCall) -> d
         "Be thorough — the locked spec governs every chapter the writer produces.",
         state,
     )
-    reply = await model_call(system, user)
+    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
     artifacts = _split_voice_reply(reply, project)
     return {
         "artifacts": artifacts["written"],
@@ -922,12 +922,10 @@ def _split_voice_reply(reply: str, project: str) -> dict:
 
 
 async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelCall) -> dict:
-    system = system_prompt_for("editorial_lock")
     cfg = _get_format_config(state.format)
-    bible = _bible_context(project, state.format)
+    prefix = _build_cache_prefix(state, project)
 
-    # If this is a revision round, include the prior editorial feedback so the
-    # model can revise the outline/bible to address the findings.
+    # If this is a revision round, include the prior editorial feedback.
     revision_context = ""
     if state.editorial_lock_retries > 0:
         prior_report = _read_file(
@@ -935,7 +933,7 @@ async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelC
         )
         if prior_report:
             revision_context = (
-                f"\n\n--- PREIOR EDITORIAL FEEDBACK (revision round {state.editorial_lock_retries}) ---\n"
+                f"\n\n--- PRIOR EDITORIAL FEEDBACK (revision round {state.editorial_lock_retries}) ---\n"
                 f"The previous editorial review flagged issues below. Revise the bible/outline "
                 f"to address every finding. Then produce a new editorial review of the revised material.\n\n"
                 f"{prior_report}\n"
@@ -943,11 +941,12 @@ async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelC
             )
 
     user = _with_instructions(
-        f"--- BIBLE ---\n{bible}\n--- END ---\n\n"
+        f"{prefix}\n\n"
+        f"--- STEP: EDITORIAL REVIEW ---\n"
         f"Review and lock the outline.{revision_context}",
         state,
     )
-    reply = await model_call(system, user)
+    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
     rel = _write_file(os.path.join("coverage_reports", "editorial_outline_lock.md"),
                       project, reply.strip() + "\n")
 
@@ -1186,29 +1185,8 @@ async def _exec_architect(state: RunState, project: str, model_call: ModelCall) 
 async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> dict:
     cfg = _get_format_config(state.format)
     chapter = state.units[state.current_unit_index]
-    system = system_prompt_for("writer")
-    # For non-novel formats, override the system prompt to prevent prose output.
-    if state.format == "tv":
-        system = (
-            "You are a TV WRITER writing a television episode in Fountain markup. "
-            "Write ONLY in Fountain screenplay format — no prose narrative. "
-            "Use INT./EXT. slug lines, ALL CAPS character names, dialogue below "
-            "character names, parentheticals only when functional. Include cold open, "
-            "act breaks, and a tag. Do NOT write novel-style prose. Do NOT use "
-            "narrative description — use ACTION lines (present tense, what the camera sees)."
-        )
-    elif state.format == "screenplay":
-        system = (
-            "You are a SCREENWRITER writing a screenplay scene in Fountain markup. "
-            "Write ONLY in Fountain screenplay format — no prose narrative. "
-            "Use INT./EXT. slug lines, ALL CAPS character names, dialogue below "
-            "character names, parentheticals only when functional. "
-            "Do NOT write novel-style prose. Do NOT use narrative description — "
-            "use ACTION lines (present tense, what the camera sees)."
-        )
+    prefix = _build_cache_prefix(state, project)
     plan = _read_file(os.path.join("critic_outputs", f"chapter_{chapter}_plan.md"), project)
-    characters = profile_context.character_context(project, "writer")
-    world = profile_context.world_context(project)
     critic_feedback = _collect_critic_feedback(project, chapter)
     rewrite_note = ""
     if critic_feedback:
@@ -1218,13 +1196,30 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
             f"listed above. Preserve what works; fix what was flagged. Do NOT start "
             f"from scratch — revise the existing {cfg.unit_label} to resolve the issues.\n"
         )
+    # Format-specific step instruction (moved from system prompt for cache optimization).
+    if state.format == "tv":
+        step_instruction = (
+            "You are a TV WRITER. Write ONLY in Fountain screenplay format — no prose narrative. "
+            "Use INT./EXT. slug lines, ALL CAPS character names, dialogue below character names, "
+            "parentheticals only when functional. Include cold open, act breaks, and a tag. "
+            "Do NOT write novel-style prose. Use ACTION lines (present tense, what the camera sees).\n"
+        )
+    elif state.format == "screenplay":
+        step_instruction = (
+            "You are a SCREENWRITER. Write ONLY in Fountain screenplay format — no prose narrative. "
+            "Use INT./EXT. slug lines, ALL CAPS character names, dialogue below character names, "
+            "parentheticals only when functional. Use ACTION lines (present tense, what the camera sees).\n"
+        )
+    else:
+        step_instruction = "You are the PROSE WRITER. Write the full chapter prose.\n"
     base_user = _with_instructions(
+        f"{prefix}\n\n"
+        f"--- STEP: WRITE {cfg.unit_label.upper()} {chapter} ---\n"
+        f"{step_instruction}"
+        f"{cfg.writer_prompt_hint}\n\n"
         f"--- ARCHITECT PLAN ---\n{plan}\n--- END ---\n\n"
-        f"{characters + chr(10)*2 if characters else ''}"
-        f"{world + chr(10)*2 if world else ''}"
         f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n{_prior_chapter_tail(project, chapter)}\n--- END ---\n\n"
         f"Write the full {cfg.unit_label} {chapter} now."
-        f"{chr(10)*2}{cfg.writer_prompt_hint}"
         f"{rewrite_note}",
         state,
     )
@@ -1321,7 +1316,7 @@ async def _exec_critics(state: RunState, project: str, model_call: ModelCall) ->
             f"(Line N + quoted span), then VERDICT."
         )
         try:
-            reply = await model_call(system, user)
+            reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
             comp = critics_mod.compose_artifact(ctype, chapter, reply, chash, project)
             results.append(comp)
         except Exception as exc:
@@ -1413,15 +1408,17 @@ async def _exec_assemble(state: RunState, project: str, model_call: ModelCall) -
 
 async def _exec_adversarial(state: RunState, project: str, model_call: ModelCall) -> dict:
     cfg = _get_format_config(state.format)
-    system = system_prompt_for("adversarial")
+    prefix = _build_cache_prefix(state, project)
     manuscript = _read_file(cfg.assembled_path, project)
     user = _with_instructions(
-        f"--- FULL {cfg.assembled_label} ---\n{manuscript}\n--- END ---\n\n"
+        f"{prefix}\n\n"
+        f"--- STEP: ADVERSARIAL READ ---\n"
         f"Read the full {cfg.unit_label} collection and produce the adversarial report with located "
-        "findings and a dimensional score out of 10.",
+        "findings and a dimensional score out of 10.\n\n"
+        f"--- FULL {cfg.assembled_label} ---\n{manuscript}\n--- END ---",
         state,
     )
-    reply = await model_call(system, user)
+    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
     rel = _write_file(os.path.join("coverage_reports", "adversarial_read.md"),
                       project, reply.strip() + "\n")
     return {"artifact": rel, "raw_preview": reply[:400]}
