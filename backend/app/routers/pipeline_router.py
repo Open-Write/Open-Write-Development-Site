@@ -220,6 +220,8 @@ def _build_phase_resolver():
 class StartRunRequest(BaseModel):
     project_name: str = ""
     word_floor: int = 800
+    word_count_min: int = 0  # 0 = use format default
+    word_count_max: int = 0  # 0 = use format default
     instructions: str = ""
     rerun_mode: str = "fresh"
     max_chapter_retries: int = 2
@@ -335,6 +337,8 @@ async def start_run(project_id: str, req: StartRunRequest,
     )
     project_format = (proj_row or {}).get("format", "novel")
     state = orchestrator.start_run(project, name, req.word_floor,
+                                   word_count_min=req.word_count_min,
+                                   word_count_max=req.word_count_max,
                                    instructions=req.instructions,
                                    rerun_mode=req.rerun_mode,
                                    max_chapter_retries=req.max_chapter_retries,
@@ -383,6 +387,10 @@ async def run_state(project_id: str, current=Depends(auth.get_current_user)):
         "max_chapter_retries": state.max_chapter_retries,
         "editorial_lock_retries": state.editorial_lock_retries,
         "max_editorial_lock_retries": state.max_editorial_lock_retries,
+        "word_floor": state.word_floor,
+        "word_count_min": state.word_count_min,
+        "word_count_max": state.word_count_max,
+        "word_target": state.word_target,
         "format": state.format,
         "unit_label": cfg.unit_label,
         "unit_label_plural": cfg.unit_label_plural,

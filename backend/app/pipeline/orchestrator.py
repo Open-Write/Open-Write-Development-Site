@@ -341,6 +341,9 @@ class RunState:
     current_unit_index: int = 0         # index into units[]
     units: list[int] = field(default_factory=list)   # chapter numbers, e.g. [1,2,3]
     word_floor: int = 800
+    word_count_min: int = 0  # per-chapter minimum (0 = use format default)
+    word_count_max: int = 0  # per-chapter maximum (0 = use format default)
+    word_target: int = 0     # per-chapter target = middle of min/max range (computed at start)
     instructions: str = ""              # user's creative brief / instructions
     format: str = "novel"                # novel | screenplay | tv
     phase_results: dict[str, dict] = field(default_factory=dict)     # project + closing
@@ -378,6 +381,9 @@ class RunState:
             current_unit_index=d.get("current_unit_index", 0),
             units=list(d.get("units", [])),
             word_floor=d.get("word_floor", 800),
+            word_count_min=d.get("word_count_min", 0),
+            word_count_max=d.get("word_count_max", 0),
+            word_target=d.get("word_target", 0),
             instructions=d.get("instructions", ""),
             format=d.get("format", "novel"),
             phase_results=dict(d.get("phase_results", {})),
@@ -755,7 +761,10 @@ async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> d
         f"of the form '---BIBLE-FILE: <relative path>---' followed by the file content. "
         f"At minimum produce bible/01_concept.md, {cfg.outline_file}, and "
         f"bible/07_format_rules.md. The outline must use '{cfg.bible_heading_hint}' headings so the "
-        f"{cfg.unit_label} count can be detected."
+        f"{cfg.unit_label} count can be detected.\n\n"
+        f"WORD COUNT TARGETS: Each {cfg.unit_label} should target approximately {state.word_target} words "
+        f"(range: {state.word_count_min}–{state.word_count_max} words per {cfg.unit_label}). "
+        f"Design the outline so each {cfg.unit_label}'s scope naturally produces content in this range."
         f"{chr(10)*2}{cfg.bible_prompt_hint}"
         f"{chr(10)*2}{format_instruction}"
         f"{chr(10)*2}{characters + chr(10)*2 if characters else ''}"
@@ -1218,7 +1227,9 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
         f"{cfg.writer_prompt_hint}\n\n"
         f"--- ARCHITECT PLAN ---\n{plan}\n--- END ---\n\n"
         f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n{_prior_chapter_tail(project, chapter)}\n--- END ---\n\n"
-        f"Write the full {cfg.unit_label} {chapter} now."
+        f"Write the full {cfg.unit_label} {chapter} now. "
+        f"Target length: {state.word_target} words (range: {state.word_count_min}–{state.word_count_max} words). "
+        f"Aim for the target — do not pad or cut short."
         f"{rewrite_note}",
         state,
     )
@@ -1249,10 +1260,8 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
             user = base_user
 
         reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
-        # Use the format's per-unit word floor, not the project-level word_floor
-        # (which is the total across all units). state.word_floor of 25,000 means
-        # "25,000 words total" — not "25,000 words per chapter/episode."
-        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, cfg.word_floor // 2))
+        # Use the per-chapter minimum word count (set by user or format default).
+        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, state.word_count_min))
 
         if usable:
             body = strip_artifacts(reply).strip() + "\n"
@@ -1446,6 +1455,7 @@ _EXECUTORS: dict[str, Callable] = {
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def start_run(project: str, project_name: str = "", word_floor: int = 800,
+              word_count_min: int = 0, word_count_max: int = 0,
               units: Optional[list[int]] = None, instructions: str = "",
               rerun_mode: str = "fresh", max_chapter_retries: int = 2,
               format: str = "novel", max_editorial_lock_retries: int = 2) -> RunState:
@@ -1462,11 +1472,23 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
     cfg = _get_format_config(format)
     if word_floor == 800 and cfg.word_floor != 800:
         word_floor = cfg.word_floor
+    # Compute per-chapter word target from min/max range.
+    # If user didn't set min/max, use format defaults.
+    if word_count_min <= 0:
+        word_count_min = cfg.word_floor
+    if word_count_max <= 0:
+        word_count_max = word_count_min * 3  # default range: 1x–3x the floor
+    if word_count_max < word_count_min:
+        word_count_max = word_count_min
+    word_target = (word_count_min + word_count_max) // 2
     state = RunState(
         project_path=project,
         project_name=name,
         started_at=datetime.now().isoformat(),
         word_floor=word_floor,
+        word_count_min=word_count_min,
+        word_count_max=word_count_max,
+        word_target=word_target,
         instructions=instructions.strip(),
         format=format,
         current_phase="bible",
