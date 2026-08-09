@@ -730,40 +730,39 @@ def _apply_user_override(phase: str, chapter: int | None, content: str,
 async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> dict:
     cfg = _get_format_config(state.format)
     # Bible is the first phase — no stable prefix yet (no bible exists).
-    # Use format-specific system prompt for this phase only.
+    # Format-specific instructions go in the user message, system prompt is global.
     if state.format == "tv":
-        system = (
-            "You are the SHOWRUNNER creating a TV series bible. Produce a series "
-            "concept, world bible, season arc, and per-episode outlines. The outline "
-            "must use '## Episode N' headings. Each episode outline should include "
-            "cold open, act breaks (A/B/C story threads), and tag. Include TV format "
-            "rules covering Fountain markup for television (slug lines, act breaks, "
-            "scene headings). Output files delimited by '---BIBLE-FILE: <path>---' markers."
+        format_instruction = (
+            "This is a TV SERIES. Produce a series concept, world bible, season arc, "
+            "and per-episode outlines. The outline must use '## Episode N' headings. "
+            "Each episode outline should include cold open, act breaks (A/B/C story threads), "
+            "and tag. Include TV format rules covering Fountain markup for television."
         )
     elif state.format == "screenplay":
-        system = (
-            "You are the SCREENWRITER creating a screenplay bible. Produce a concept, "
-            "character breakdown, scene-by-scene outline, and format rules. The outline "
-            "must use '## Scene N' headings. Include Fountain markup discipline (INT./EXT. "
-            "slug lines, ALL CAPS character names, parentheticals only when functional, "
-            "no camera directions). Output files delimited by '---BIBLE-FILE: <path>---' markers."
+        format_instruction = (
+            "This is a SCREENPLAY. Produce a concept, character breakdown, scene-by-scene "
+            "outline, and format rules. The outline must use '## Scene N' headings. "
+            "Include Fountain markup discipline (INT./EXT. slug lines, ALL CAPS character names, "
+            "parentheticals only when functional, no camera directions)."
         )
     else:
-        system = system_prompt_for("bible")
+        format_instruction = ""
     characters = profile_context.character_context(project, "architect")
     world = profile_context.world_context(project)
     user = _with_instructions(
+        f"--- STEP: PRODUCE BIBLE ---\n"
         f"Produce the bible for a new {cfg.format}. Output three files delimited by markers "
         f"of the form '---BIBLE-FILE: <relative path>---' followed by the file content. "
         f"At minimum produce bible/01_concept.md, {cfg.outline_file}, and "
         f"bible/07_format_rules.md. The outline must use '{cfg.bible_heading_hint}' headings so the "
         f"{cfg.unit_label} count can be detected."
         f"{chr(10)*2}{cfg.bible_prompt_hint}"
+        f"{chr(10)*2}{format_instruction}"
         f"{chr(10)*2}{characters + chr(10)*2 if characters else ''}"
         f"{world + chr(10)*2 if world else ''}",
         state,
     )
-    reply = await model_call(system, user)
+    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
     artifacts = _split_bible_reply(reply, project)
     _sync_outline_to_ui(project)
     _generate_skeleton_profiles(project)
