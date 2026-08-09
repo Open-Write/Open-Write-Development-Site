@@ -1249,7 +1249,7 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
         else:
             user = base_user
 
-        reply = await model_call(system, user)
+        reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
         # Use the format's per-unit word floor, not the project-level word_floor
         # (which is the total across all units). state.word_floor of 25,000 means
         # "25,000 words total" — not "25,000 words per chapter/episode."
