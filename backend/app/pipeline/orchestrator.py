@@ -762,9 +762,10 @@ async def _exec_bible(state: RunState, project: str, model_call: ModelCall) -> d
         f"At minimum produce bible/01_concept.md, {cfg.outline_file}, and "
         f"bible/07_format_rules.md. The outline must use '{cfg.bible_heading_hint}' headings so the "
         f"{cfg.unit_label} count can be detected.\n\n"
-        f"WORD COUNT TARGETS: Each {cfg.unit_label} should target approximately {state.word_target} words "
-        f"(range: {state.word_count_min}–{state.word_count_max} words per {cfg.unit_label}). "
-        f"Design the outline so each {cfg.unit_label}'s scope naturally produces content in this range."
+        f"TOTAL WORD COUNT: The finished manuscript should be {state.word_count_min}–{state.word_count_max} words total. "
+        f"Distribute this across {cfg.unit_label_plural} as you see fit — some {cfg.unit_label_plural} may be shorter "
+        f"and others longer depending on narrative needs. For each {cfg.unit_label} in the outline, note a suggested "
+        f"word count target so the writer knows how much depth to aim for."
         f"{chr(10)*2}{cfg.bible_prompt_hint}"
         f"{chr(10)*2}{format_instruction}"
         f"{chr(10)*2}{characters + chr(10)*2 if characters else ''}"
@@ -1228,8 +1229,7 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
         f"--- ARCHITECT PLAN ---\n{plan}\n--- END ---\n\n"
         f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n{_prior_chapter_tail(project, chapter)}\n--- END ---\n\n"
         f"Write the full {cfg.unit_label} {chapter} now. "
-        f"Target length: {state.word_target} words (range: {state.word_count_min}–{state.word_count_max} words). "
-        f"Aim for the target — do not pad or cut short."
+        f"Follow the word count target from the architect plan for this {cfg.unit_label}."
         f"{rewrite_note}",
         state,
     )
@@ -1472,12 +1472,12 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
     cfg = _get_format_config(format)
     if word_floor == 800 and cfg.word_floor != 800:
         word_floor = cfg.word_floor
-    # Compute per-chapter word target from min/max range.
-    # If user didn't set min/max, use format defaults.
+    # Total word count range for the entire manuscript.
+    # If user didn't set min/max, use sensible defaults based on format.
     if word_count_min <= 0:
-        word_count_min = cfg.word_floor
+        word_count_min = 10000  # default total minimum
     if word_count_max <= 0:
-        word_count_max = word_count_min * 3  # default range: 1x–3x the floor
+        word_count_max = word_count_min * 3  # default range: 1x–3x
     if word_count_max < word_count_min:
         word_count_max = word_count_min
     word_target = (word_count_min + word_count_max) // 2
