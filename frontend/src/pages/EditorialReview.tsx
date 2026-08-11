@@ -620,6 +620,7 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
   const [draftStage, setDraftStage] = useState("");
   const [rubricText, setRubricText] = useState("");
   const [compiled, setCompiled] = useState<CompiledPersona | null>(null);
+  const [savedDbId, setSavedDbId] = useState<string | null>(null);  // DB UUID if loaded from library
   const [warnings, setWarnings] = useState<string[]>([]);
   const [compiling, setCompiling] = useState(false);
   const [running, setRunning] = useState(false);
@@ -664,6 +665,7 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
         setError(res.error);
       } else if (res.persona) {
         setCompiled(res.persona as unknown as CompiledPersona);
+        setSavedDbId(null);  // freshly compiled — not yet saved
         setWarnings(res.warnings || []);
       }
     } catch (e) { setError((e as Error).message); }
@@ -686,9 +688,20 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
         }
       }
 
-      const saved = await api.savePersona({ persona: compiled as unknown as Record<string, unknown> });
+      // Save or update the persona
+      let personaIdForRun: string;
+      if (savedDbId) {
+        // Update existing persona in place — don't create a duplicate
+        await api.updatePersona(savedDbId, { persona: compiled as unknown as Record<string, unknown> });
+        personaIdForRun = savedDbId;
+      } else {
+        // First time saving — create new
+        const saved = await api.savePersona({ persona: compiled as unknown as Record<string, unknown> });
+        personaIdForRun = saved.id;
+        setSavedDbId(saved.id);  // remember so next run updates instead of duplicating
+      }
       const res = await api.runPersona(reviewId, {
-        persona_id: saved.id,
+        persona_id: personaIdForRun,
         rubric,
         severity: compiled.severity,
       });
@@ -700,12 +713,13 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
     finally { setRunning(false); }
   };
 
-  const loadBuiltin = async (personaId: string) => {
+  const loadBuiltin = async (personaId: string, isBuiltin: boolean) => {
     try {
       const res = await api.getPersona(personaId);
       if (res.persona) {
         setCompiled(res.persona as unknown as CompiledPersona);
-        setDescription(res.persona.created_from as string || "");
+        setSavedDbId(isBuiltin ? null : (res.db_id || personaId));  // track DB ID for user personas
+        setDescription((res.persona as unknown as CompiledPersona).created_from || "");
         setWarnings([]);
       }
     } catch (e) { setError((e as Error).message); }
@@ -882,7 +896,7 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
             {personaList.map((p) => (
               <button key={p.id}
                 className="flex w-full items-center justify-between rounded px-2 py-1 text-xs text-gray-400 hover:bg-ink-850"
-                onClick={() => loadBuiltin(p.is_builtin ? p.persona_id : p.id)}>
+                onClick={() => loadBuiltin(p.is_builtin ? p.persona_id : p.id, p.is_builtin)}>
                 <span>{p.name}</span>
                 {p.is_builtin && <span className="badge bg-ink-800 text-gray-500">built-in</span>}
               </button>
