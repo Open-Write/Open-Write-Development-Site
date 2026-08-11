@@ -230,7 +230,8 @@ def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: st
     _FALLBACK_STATUSES = {401, 402, 429, 502, 503, 504}
 
     async def _try_provider(p_key: str, p_model: str, p_base: str,
-                            label: str, retries: int = 3) -> str:
+                            label: str, retries: int = 3,
+                            system_prompt: str = "", user_prompt: str = "") -> str:
         """Try one provider with retry on transient errors."""
         last_exc = None
         for attempt in range(retries):
@@ -257,7 +258,8 @@ def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: st
 
     async def model_call(system_prompt: str, user_prompt: str) -> str:
         try:
-            return await _try_provider(api_key, model_name, base_url, "primary")
+            return await _try_provider(api_key, model_name, base_url, "primary",
+                                       system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as primary_exc:
             # If no fallbacks configured, re-raise immediately.
             if not fallback_providers:
@@ -283,6 +285,7 @@ def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: st
                 try:
                     result = await _try_provider(
                         fb_key, fb_model, fb_base, "fallback", retries=2,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
                     )
                     log.info(
                         "Fallback provider succeeded: model=%s base=%s",
