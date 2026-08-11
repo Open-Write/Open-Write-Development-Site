@@ -686,15 +686,16 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
         }
       }
 
-      // First save the persona, then run it
       const saved = await api.savePersona({ persona: compiled as unknown as Record<string, unknown> });
       const res = await api.runPersona(reviewId, {
         persona_id: saved.id,
         rubric,
         severity: compiled.severity,
       });
-      // The result will appear in the reports tab after reload
-      window.location.reload();
+      // Show result inline instead of reloading
+      setRunning(false);
+      alert(`${compiled.name} completed.\n\n${res.output.slice(0, 500)}...`);
+      return;
     } catch (e) { setError((e as Error).message); }
     finally { setRunning(false); }
   };
@@ -881,7 +882,7 @@ function CustomReaderPanel({ reviewId }: { reviewId: string }) {
             {personaList.map((p) => (
               <button key={p.id}
                 className="flex w-full items-center justify-between rounded px-2 py-1 text-xs text-gray-400 hover:bg-ink-850"
-                onClick={() => loadBuiltin(p.persona_id)}>
+                onClick={() => loadBuiltin(p.is_builtin ? p.persona_id : p.id)}>
                 <span>{p.name}</span>
                 {p.is_builtin && <span className="badge bg-ink-800 text-gray-500">built-in</span>}
               </button>

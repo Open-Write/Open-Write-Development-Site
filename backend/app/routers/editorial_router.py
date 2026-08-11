@@ -904,20 +904,33 @@ async def list_personas(current=Depends(auth.get_current_user)):
 
 @router.get("/personas/{persona_db_id}")
 async def get_persona(persona_db_id: str, current=Depends(auth.get_current_user)):
-    """Get a full persona spec by database ID."""
+    """Get a full persona spec by database ID or persona_id slug."""
     from app.ai.persona import BUILTIN_PERSONAS
 
-    # Check built-in first
+    # Check built-in first (matched by persona_id slug)
     for p in BUILTIN_PERSONAS:
         if p["persona_id"] == persona_db_id:
             return {"persona": p, "is_builtin": True}
 
-    # Check user's personas
+    # Check user's personas — try UUID first, then persona_id slug
     row = db.query_one(
         "SELECT id, persona_json, is_builtin, created_at, updated_at "
         "FROM editorial_personas WHERE id = %s AND user_id = %s",
         (persona_db_id, current["id"]),
     )
+    if not row:
+        # Try matching by persona_id inside the JSON (slug lookup)
+        rows = db.query_all(
+            "SELECT id, persona_json, is_builtin, created_at, updated_at "
+            "FROM editorial_personas WHERE user_id = %s",
+            (current["id"],),
+        )
+        for r in rows:
+            spec = json.loads(r["persona_json"])
+            if spec.get("persona_id") == persona_db_id:
+                row = r
+                break
+
     if not row:
         raise HTTPException(404, "Persona not found.")
     spec = json.loads(row["persona_json"])
