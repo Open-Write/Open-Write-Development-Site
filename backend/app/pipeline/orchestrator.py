@@ -344,9 +344,16 @@ class RunState:
     word_count_min: int = 0  # total manuscript minimum (set by user or default)
     word_count_max: int = 0  # total manuscript maximum (set by user or default)
     word_target: int = 0     # total manuscript target = midpoint of min/max
-    per_chapter_min: int = 0  # per-chapter minimum (computed after outline lock)
-    per_chapter_max: int = 0  # per-chapter maximum (computed after outline lock)
-    per_chapter_target: int = 0  # per-chapter target (computed after outline lock)
+    per_chapter_min: int = 0  # derived: min of all node_allocations (backward compat)
+    per_chapter_max: int = 0  # derived: max of all node_allocations (backward compat)
+    per_chapter_target: int = 0  # derived: average of all node_allocations (backward compat)
+    node_allocations: dict = field(default_factory=dict)  # chapter -> {min, max, target}
+    # Evaluator: per-chapter proper failure count (NOT derived from chapter_retries)
+    proper_failure_count: dict = field(default_factory=dict)  # chapter -> int
+    # Evaluator: per-chapter intervention ledger
+    evaluator_ledger: dict = field(default_factory=dict)  # chapter -> {attempts, verdicts, ...}
+    # Evaluator: global word budget ledger
+    budget_ledger: dict = field(default_factory=dict)
     instructions: str = ""              # user's creative brief / instructions
     format: str = "novel"                # novel | screenplay | tv
     phase_results: dict[str, dict] = field(default_factory=dict)     # project + closing
@@ -392,6 +399,10 @@ class RunState:
             per_chapter_min=d.get("per_chapter_min", 0),
             per_chapter_max=d.get("per_chapter_max", 0),
             per_chapter_target=d.get("per_chapter_target", 0),
+            node_allocations={int(k): v for k, v in d.get("node_allocations", {}).items()},
+            proper_failure_count={int(k): v for k, v in d.get("proper_failure_count", {}).items()},
+            evaluator_ledger=d.get("evaluator_ledger", {}),
+            budget_ledger=d.get("budget_ledger", {}),
             instructions=d.get("instructions", ""),
             format=d.get("format", "novel"),
             phase_results=dict(d.get("phase_results", {})),
@@ -1008,12 +1019,28 @@ async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelC
         # against a reasonable per-chapter floor.
         total_min = state.word_count_min or 10000
         total_max = state.word_count_max or total_min * 3
-        state.per_chapter_min = max(state.word_floor, total_min // chapter_count)
-        state.per_chapter_max = total_max // chapter_count
-        state.per_chapter_target = (total_min + total_max) // (2 * chapter_count)
-        # Ensure per-chapter max >= per-chapter min
-        if state.per_chapter_max < state.per_chapter_min:
-            state.per_chapter_max = state.per_chapter_min
+        ch_min = max(state.word_floor, total_min // chapter_count)
+        ch_max = total_max // chapter_count
+        ch_target = (total_min + total_max) // (2 * chapter_count)
+        if ch_max < ch_min:
+            ch_max = ch_min
+        # D1: Initialize per-chapter allocations. This is the per-node budget
+        # that the Evaluator's accept_rebalance verdict can adjust.
+        state.node_allocations = {
+            ch: {"min": ch_min, "max": ch_max, "target": ch_target}
+            for ch in state.units
+        }
+        # Derive scalars from allocations (backward compatibility)
+        state.per_chapter_min = ch_min
+        state.per_chapter_max = ch_max
+        state.per_chapter_target = ch_target
+        # Initialize budget ledger
+        state.budget_ledger = {
+            "manuscript_target": (total_min + total_max) // 2,
+            "node_allocations": {ch: ch_target for ch in state.units},
+            "accepted_deltas": [],
+            "unassigned_deficit": 0,
+        }
     return {"artifact": rel, "manifest": manifest_built, "verdict": verdict, "raw_preview": reply[:400]}
 
 
@@ -1304,7 +1331,10 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
 
         reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
         # Use the per-chapter minimum word count (set by user or format default).
-        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, state.per_chapter_min or state.word_floor))
+        # D1: Use per-chapter allocation for word floor instead of scalar.
+        alloc = state.node_allocations.get(chapter, {})
+        chapter_floor = alloc.get("min", state.per_chapter_min or state.word_floor)
+        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, chapter_floor))
 
         if usable:
             body = strip_artifacts(reply).strip() + "\n"

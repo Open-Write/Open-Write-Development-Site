@@ -583,6 +583,7 @@ async def run_state(project_id: str, current=Depends(auth.get_current_user)):
         "per_chapter_min": state.per_chapter_min,
         "per_chapter_max": state.per_chapter_max,
         "per_chapter_target": state.per_chapter_target,
+        "node_allocations": state.node_allocations,
         "cost_summary": _cost_summary(state.cost_log),
         "format": state.format,
         "unit_label": cfg.unit_label,
