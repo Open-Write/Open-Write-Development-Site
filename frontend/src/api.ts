@@ -325,6 +325,39 @@ export const api = {
     request<{ versions: { version_number: number; content: string; feedback: string; instructions: string; created_at: string }[] }>(
       `/editorial/reviews/${id}/versions`),
 
+  // Custom personas
+  listPersonas: () =>
+    request<{ personas: { id: string; persona_id: string; name: string; one_line: string; severity: number; is_builtin: boolean; created_at: string | null }[] }>(
+      "/editorial/personas"),
+  getPersona: (id: string) =>
+    request<{ persona: Record<string, unknown>; is_builtin: boolean; db_id?: string }>(
+      `/editorial/personas/${id}`),
+  savePersona: (body: { persona: Record<string, unknown> }) =>
+    request<{ id: string; persona_id: string; name: string }>(
+      "/editorial/personas", { method: "POST", body }),
+  updatePersona: (id: string, body: { persona: Record<string, unknown> }) =>
+    request<{ updated: boolean; persona_id: string; name: string }>(
+      `/editorial/personas/${id}`, { method: "PUT", body }),
+  deletePersona: (id: string) =>
+    request<{ deleted: boolean }>(
+      `/editorial/personas/${id}`, { method: "DELETE" }),
+  importPersona: (body: Record<string, unknown>) =>
+    request<{ id: string; name: string }>(
+      "/editorial/personas/import", { method: "POST", body }),
+  compilePersona: (body: { description: string; genre?: string; audience?: string; draft_stage?: string; rubric?: Record<string, unknown> | null }) =>
+    request<{ persona: Record<string, unknown> | null; warnings: string[]; error: string | null; raw_response: string }>(
+      "/editorial/compile-persona", { method: "POST", body }),
+  // Run custom persona on a review
+  runPersona: (reviewId: string, body: { persona_id: string; rubric?: Record<string, unknown> | null; severity?: number }) =>
+    request<{ run_id: string; persona_name: string; output: string; severity: number; model_used: string }>(
+      `/editorial/reviews/${reviewId}/run-persona`, { method: "POST", body }),
+  warmCache: (reviewId: string) =>
+    request<{ warmed: boolean }>(
+      `/editorial/reviews/${reviewId}/warm-cache`, { method: "POST" }),
+  listRuns: (reviewId: string) =>
+    request<{ runs: { id: string; persona_name: string; severity: number; output: string; cache_hit_tokens: number; cache_miss_tokens: number; cost_usd: number; created_at: string }[] }>(
+      `/editorial/reviews/${reviewId}/runs`),
+
   // Admin
   listApprovedEmails: () =>
     request<{ email: string; is_admin: boolean; added_by: string | null; created_at: string | null }[]>(
