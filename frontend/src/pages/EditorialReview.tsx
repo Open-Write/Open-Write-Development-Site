@@ -435,6 +435,9 @@ function DetailTabs(props: {
               </div>
             </div>
 
+            {/* Argument Reader v2 */}
+            <ArgumentReaderPanel reviewId={props.review.id} />
+
             {/* Custom Reader */}
             <CustomReaderPanel reviewId={props.review.id} />
 
@@ -612,6 +615,109 @@ interface CompiledPersona {
   rubric: Record<string, unknown> | null;
   created_from: string;
 }
+
+
+// ── Argument Reader v2 Panel ────────────────────────────────────────────────
+
+function ArgumentReaderPanel({ reviewId }: { reviewId: string }) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [results, setResults] = useState<{
+    readers: { persona_id: string; name: string; output: string }[];
+    synthesis: { output: string; name: string } | null;
+    amplification: { output: string; name: string } | null;
+  } | null>(null);
+  const [includeAmp, setIncludeAmp] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const runBatch = async () => {
+    setRunning(true); setError(""); setResults(null);
+    try {
+      const res = await api.runArgumentReader(reviewId, { include_amplification: includeAmp });
+      setResults(res);
+    } catch (e) { setError((e as Error).message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="card p-4 space-y-3">
+      <h3 className="text-sm font-semibold text-gray-300">Argument Reader v2</h3>
+      <p className="text-xs text-gray-500">
+        Four blinded readers evaluate whether your argument survives contact with its target
+        audiences: a congressional staffer, a political-economy academic, a hostile columnist,
+        and a booking producer. A synthesis pass clusters findings across all four.
+      </p>
+
+      <div className="flex items-center gap-2 text-xs text-gray-400">
+        <input type="checkbox" id="include-amp" checked={includeAmp}
+          onChange={(e) => setIncludeAmp(e.target.checked)} />
+        <label htmlFor="include-amp">Include amplification strategy</label>
+      </div>
+
+      <button className="btn-primary w-full text-xs"
+        onClick={runBatch} disabled={running}>
+        {running ? "Running 4 readers + synthesis…" : "Run Argument Reader v2"}
+      </button>
+
+      {error && <p className="text-xs text-red-400">{error}</p>}
+
+      {results && (
+        <div className="space-y-2 border-t border-edge pt-3">
+          <h4 className="text-xs font-semibold text-gray-200">Results</h4>
+
+          {/* Individual readers */}
+          {results.readers.map((r) => (
+            <div key={r.persona_id} className="rounded border border-edge p-2">
+              <button className="flex w-full items-center justify-between text-xs font-medium text-gray-300"
+                onClick={() => setExpanded(expanded === r.persona_id ? null : r.persona_id)}>
+                <span>{r.name}</span>
+                <span className="text-gray-500">{expanded === r.persona_id ? "▲" : "▼"}</span>
+              </button>
+              {expanded === r.persona_id && (
+                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-gray-400">
+                  {r.output}
+                </pre>
+              )}
+            </div>
+          ))}
+
+          {/* Synthesis */}
+          {results.synthesis && (
+            <div className="rounded border border-accent/30 p-2">
+              <button className="flex w-full items-center justify-between text-xs font-semibold text-accent"
+                onClick={() => setExpanded(expanded === "synthesis" ? null : "synthesis")}>
+                <span>{results.synthesis.name}</span>
+                <span>{expanded === "synthesis" ? "▲" : "▼"}</span>
+              </button>
+              {expanded === "synthesis" && (
+                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-gray-400">
+                  {results.synthesis.output}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {/* Amplification */}
+          {results.amplification && (
+            <div className="rounded border border-edge p-2">
+              <button className="flex w-full items-center justify-between text-xs font-medium text-gray-300"
+                onClick={() => setExpanded(expanded === "amplification" ? null : "amplification")}>
+                <span>{results.amplification.name}</span>
+                <span className="text-gray-500">{expanded === "amplification" ? "▲" : "▼"}</span>
+              </button>
+              {expanded === "amplification" && (
+                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-gray-400">
+                  {results.amplification.output}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function CustomReaderPanel({ reviewId }: { reviewId: string }) {
   const [description, setDescription] = useState("");

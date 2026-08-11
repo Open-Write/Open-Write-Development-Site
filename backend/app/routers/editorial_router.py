@@ -1130,6 +1130,7 @@ async def run_persona_review(review_id: str, req: RunPersonaRequest,
     """
     from app.ai.persona import (
         BUILTIN_PERSONAS, PersonaSpec, assemble_review_prompt,
+        ARGUMENT_READER_IDS, SYNTHESIS_READER_ID, AMPLIFICATION_READER_ID,
     )
 
     row = db.query_one(
@@ -1167,9 +1168,13 @@ async def run_persona_review(review_id: str, req: RunPersonaRequest,
     if req.severity is not None:
         spec.severity = max(1, min(5, req.severity))
 
+    # Determine if this is an Argument Reader v2 persona
+    is_arg = req.persona_id in ARGUMENT_READER_IDS or req.persona_id == SYNTHESIS_READER_ID
+
     # Assemble the prompt in §4 order.
     manuscript = row["current_content"]
-    system, user = assemble_review_prompt(manuscript, spec, rubric=req.rubric)
+    system, user = assemble_review_prompt(manuscript, spec, rubric=req.rubric,
+                                          is_argument_reader=is_arg)
 
     api_key, model_name, base_url = _resolve_call_model(None)
 
@@ -1240,6 +1245,187 @@ async def warm_cache(review_id: str, current=Depends(auth.get_current_user)):
         pass  # non-fatal — the real calls will still work, just without cache benefit
 
     return {"warmed": True}
+
+
+class RunArgumentReaderRequest(BaseModel):
+    include_amplification: bool = False
+
+
+@router.post("/reviews/{review_id}/run-argument-reader")
+async def run_argument_reader_batch(
+    review_id: str,
+    req: RunArgumentReaderRequest,
+    current=Depends(auth.get_current_user),
+):
+    """Run the full Argument Reader v2 batch: 4 readers in parallel, then synthesis.
+
+    The 4 readers (Staffer, Academic, Columnist, Producer) are blinded from
+    each other and run concurrently. After all 4 complete, the synthesis pass
+    receives all 4 prose reports and findings blocks. Optionally runs the
+    amplification pass last (quarantined from the manuscript).
+    """
+    import asyncio as _asyncio
+    from app.ai.persona import (
+        BUILTIN_PERSONAS, PersonaSpec, assemble_review_prompt,
+        ARGUMENT_READER_IDS, SYNTHESIS_READER_ID, AMPLIFICATION_READER_ID,
+        GLOBAL_PREAMBLE, _render_persona_for_prompt,
+        ARGUMENT_PREAMBLE, ARGUMENT_FINDINGS_JSON_CONTRACT,
+    )
+
+    row = db.query_one(
+        "SELECT id, current_content, title FROM editorial_reviews WHERE id = %s AND user_id = %s",
+        (review_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Review not found.")
+
+    manuscript = row["current_content"]
+
+    # Resolve the 4 reader personas.
+    reader_personas = []
+    for p in BUILTIN_PERSONAS:
+        if p["persona_id"] in ARGUMENT_READER_IDS:
+            reader_personas.append(p)
+
+    if len(reader_personas) != 4:
+        raise HTTPException(500, f"Expected 4 argument readers, found {len(reader_personas)}")
+
+    api_key, model_name, base_url = _resolve_call_model(None)
+
+    # Warm the cache first.
+    from app.ai.persona import assemble_cache_warmup_prompt
+    warmup_system, warmup_user = assemble_cache_warmup_prompt(manuscript)
+    try:
+        from app.ai.openrouter import run_chat
+        await run_chat(
+            api_key=api_key, model_id=model_name, base_url=base_url,
+            system_prompt=warmup_system, messages=[{"role": "user", "content": warmup_user}],
+            temperature=0.1, pipeline_step="cache-warmup",
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        pass
+
+    # Run the 4 readers in parallel.
+    async def _run_one_reader(persona_dict: dict) -> dict:
+        spec = PersonaSpec(**persona_dict)
+        system, user = assemble_review_prompt(manuscript, spec, is_argument_reader=True)
+        try:
+            reply = await _run_model_async(system, user, api_key, model_name, base_url,
+                                           step=f"argument-reader:{spec.persona_id}")
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            reply = f"ERROR: {exc}"
+        return {
+            "persona_id": spec.persona_id,
+            "name": spec.name,
+            "output": reply,
+        }
+
+    # Run all 4 concurrently.
+    results = await _asyncio.gather(*[_run_one_reader(p) for p in reader_personas])
+
+    # Save each result.
+    reader_outputs = []
+    for r in results:
+        db.execute(
+            "INSERT INTO editorial_runs "
+            "(review_id, user_id, persona_id, persona_name, output, severity) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (review_id, current["id"], r["persona_id"], r["name"], r["output"], 4),
+        )
+        db.execute(
+            "INSERT INTO editorial_review_reports (review_id, report_type, report, verdict) "
+            "VALUES (%s, %s, %s, %s)",
+            (review_id, f"argument-reader:{r['name']}", r["output"], "REVIEW"),
+        )
+        reader_outputs.append(r)
+
+    # Run synthesis pass with all 4 outputs.
+    synthesis_persona = None
+    for p in BUILTIN_PERSONAS:
+        if p["persona_id"] == SYNTHESIS_READER_ID:
+            synthesis_persona = p
+            break
+
+    synthesis_output = ""
+    if synthesis_persona:
+        # Build synthesis input: all 4 reports + findings blocks
+        synthesis_input_parts = []
+        for r in reader_outputs:
+            synthesis_input_parts.append(
+                f"--- {r['name'].upper()} REPORT ---\n{r['output']}\n--- END REPORT ---"
+            )
+        synthesis_reports = "\n\n".join(synthesis_input_parts)
+
+        spec = PersonaSpec(**synthesis_persona)
+        # Synthesis gets the reports but NOT the manuscript
+        system = GLOBAL_PREAMBLE
+        persona_block = _render_persona_for_prompt(spec)
+        persona_block = f"{ARGUMENT_PREAMBLE}\n\n{persona_block}"
+        user = (
+            f"--- READER REPORTS ---\n{synthesis_reports}\n--- END REPORTS ---\n\n"
+            f"--- READER PERSONA ---\n{persona_block}\n--- END PERSONA ---\n\n"
+            f"TASK: Synthesize the four blinded reader reports above.{ARGUMENT_FINDINGS_JSON_CONTRACT}"
+        )
+        try:
+            synthesis_output = await _run_model_async(system, user, api_key, model_name, base_url,
+                                                      step="argument-reader:synthesis")
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            synthesis_output = f"ERROR: {exc}"
+
+        db.execute(
+            "INSERT INTO editorial_runs "
+            "(review_id, user_id, persona_id, persona_name, output, severity) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (review_id, current["id"], SYNTHESIS_READER_ID, spec.name, synthesis_output, 4),
+        )
+        db.execute(
+            "INSERT INTO editorial_review_reports (review_id, report_type, report, verdict) "
+            "VALUES (%s, %s, %s, %s)",
+            (review_id, f"argument-reader:{spec.name}", synthesis_output, "REVIEW"),
+        )
+
+    # Optionally run amplification pass.
+    amplification_output = ""
+    if req.include_amplification and synthesis_output:
+        amp_persona = None
+        for p in BUILTIN_PERSONAS:
+            if p["persona_id"] == AMPLIFICATION_READER_ID:
+                amp_persona = p
+                break
+
+        if amp_persona:
+            spec = PersonaSpec(**amp_persona)
+            system = GLOBAL_PREAMBLE
+            persona_block = _render_persona_for_prompt(spec)
+            user = (
+                f"--- SYNTHESIS REPORT ---\n{synthesis_output}\n--- END SYNTHESIS ---\n\n"
+                f"--- ADVISOR PERSONA ---\n{persona_block}\n--- END PERSONA ---\n\n"
+                f"TASK: Advise on placement strategy based on the synthesis above."
+            )
+            try:
+                amplification_output = await _run_model_async(system, user, api_key, model_name, base_url,
+                                                              step="argument-reader:amplification")
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                amplification_output = f"ERROR: {exc}"
+
+            db.execute(
+                "INSERT INTO editorial_runs "
+                "(review_id, user_id, persona_id, persona_name, output, severity) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (review_id, current["id"], AMPLIFICATION_READER_ID, spec.name, amplification_output, 3),
+            )
+
+    db.execute("UPDATE editorial_reviews SET updated_at = NOW() WHERE id = %s", (review_id,))
+
+    return {
+        "readers": [
+            {"persona_id": r["persona_id"], "name": r["name"], "output": r["output"]}
+            for r in reader_outputs
+        ],
+        "synthesis": {"output": synthesis_output, "name": "Synthesis"} if synthesis_output else None,
+        "amplification": {"output": amplification_output, "name": "Amplification Strategy"} if amplification_output else None,
+        "model_used": model_name,
+    }
 
 
 @router.get("/reviews/{review_id}/runs")

@@ -357,6 +357,10 @@ export const api = {
   listRuns: (reviewId: string) =>
     request<{ runs: { id: string; persona_name: string; severity: number; output: string; cache_hit_tokens: number; cache_miss_tokens: number; cost_usd: number; created_at: string }[] }>(
       `/editorial/reviews/${reviewId}/runs`),
+  // Argument Reader v2 batch
+  runArgumentReader: (reviewId: string, body?: { include_amplification?: boolean }) =>
+    request<{ readers: { persona_id: string; name: string; output: string }[]; synthesis: { output: string; name: string } | null; amplification: { output: string; name: string } | null; model_used: string }>(
+      `/editorial/reviews/${reviewId}/run-argument-reader`, { method: "POST", body: body || {} }),
 
   // Admin
   listApprovedEmails: () =>
