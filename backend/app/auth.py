@@ -1,7 +1,8 @@
 """JWT authentication + password hashing + FastAPI dependencies.
 
 Provides:
-  - hash_password / verify_password (bcrypt via passlib)
+  - hash_password / verify_password (bcrypt directly — passlib has compatibility
+    issues with bcrypt 4.x; using bcrypt directly avoids the version trap)
   - create_access_token / decode_token (python-jose)
   - get_current_user dependency that also loads the user's settings into the
     per-request contextvar so pipeline/AI code sees the right API keys.
@@ -11,26 +12,25 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app import db, settings_store
 from app.config import JWT_ALGORITHM, JWT_EXPIRE_HOURS, JWT_SECRET
 
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
     # bcrypt has a 72-byte limit; truncate defensively.
-    return _pwd.hash(password[:72])
+    return bcrypt.hashpw(password[:72].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     try:
-        return _pwd.verify(password[:72], password_hash)
+        return bcrypt.checkpw(password[:72].encode("utf-8"), password_hash.encode("utf-8"))
     except Exception:
         return False
 

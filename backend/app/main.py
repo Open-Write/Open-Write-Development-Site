@@ -9,6 +9,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Load .env file before any config imports so environment variables are set.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 # Resolve paths relative to the repo root (two levels up from this file).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
