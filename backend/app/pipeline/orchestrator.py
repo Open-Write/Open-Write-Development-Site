@@ -341,9 +341,12 @@ class RunState:
     current_unit_index: int = 0         # index into units[]
     units: list[int] = field(default_factory=list)   # chapter numbers, e.g. [1,2,3]
     word_floor: int = 800
-    word_count_min: int = 0  # per-chapter minimum (0 = use format default)
-    word_count_max: int = 0  # per-chapter maximum (0 = use format default)
-    word_target: int = 0     # per-chapter target = middle of min/max range (computed at start)
+    word_count_min: int = 0  # total manuscript minimum (set by user or default)
+    word_count_max: int = 0  # total manuscript maximum (set by user or default)
+    word_target: int = 0     # total manuscript target = midpoint of min/max
+    per_chapter_min: int = 0  # per-chapter minimum (computed after outline lock)
+    per_chapter_max: int = 0  # per-chapter maximum (computed after outline lock)
+    per_chapter_target: int = 0  # per-chapter target (computed after outline lock)
     instructions: str = ""              # user's creative brief / instructions
     format: str = "novel"                # novel | screenplay | tv
     phase_results: dict[str, dict] = field(default_factory=dict)     # project + closing
@@ -362,6 +365,8 @@ class RunState:
     max_chapter_retries: int = 2  # max critic-revision loops per chapter before force-advancing
     editorial_lock_retries: int = 0  # how many editorial_lock revision rounds have run
     max_editorial_lock_retries: int = 2  # max editorial revision rounds before force-advancing
+    cost_log: list[dict] = field(default_factory=list)  # per-step cost records from openrouter
+    revision_light: bool = False  # skip per-chapter critics during revision (writer + adversarial only)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -384,6 +389,9 @@ class RunState:
             word_count_min=d.get("word_count_min", 0),
             word_count_max=d.get("word_count_max", 0),
             word_target=d.get("word_target", 0),
+            per_chapter_min=d.get("per_chapter_min", 0),
+            per_chapter_max=d.get("per_chapter_max", 0),
+            per_chapter_target=d.get("per_chapter_target", 0),
             instructions=d.get("instructions", ""),
             format=d.get("format", "novel"),
             phase_results=dict(d.get("phase_results", {})),
@@ -397,6 +405,8 @@ class RunState:
             max_chapter_retries=int(d.get("max_chapter_retries", 2)),
             editorial_lock_retries=int(d.get("editorial_lock_retries", 0)),
             max_editorial_lock_retries=int(d.get("max_editorial_lock_retries", 2)),
+            cost_log=list(d.get("cost_log", [])),
+            revision_light=d.get("revision_light", False),
         )
 
 
@@ -504,13 +514,16 @@ def _build_cache_prefix(state: RunState, project: str) -> str:
 
     # Manuscript so far (append-only — new chapters added to the end).
     # This grows but the prefix stays valid as long as earlier text isn't modified.
+    # Chapters are separated by a blank line.  No manuscript-level closing marker
+    # is used — it would shift position on every new chapter, breaking DeepSeek's
+    # prefix cache hit on the shared portion of the prompt.
     manuscript_parts: list[str] = []
     for ch in state.units[: state.current_unit_index]:
         text = _read_file(_unit_rel(ch, state, project), project)
         if text:
             manuscript_parts.append(f"--- {cfg.unit_label.capitalize()} {ch} ---\n{text}\n--- END ---")
     if manuscript_parts:
-        parts.append(f"--- MANUSCRIPT SO FAR ---\n{''.join(manuscript_parts)}\n--- END ---")
+        parts.append(f"--- MANUSCRIPT SO FAR ---\n" + "\n\n".join(manuscript_parts))
 
     return "\n\n".join(parts)
 
@@ -601,6 +614,14 @@ def next_phase(state: RunState) -> Optional[str]:
     idx = _phase_index(cur)
     # Within per-unit loop, advance to next unit before moving to closing.
     if cur in UNIT_PHASES:
+        # Light revision mode: after writer, skip critics/editorial/verify_unit
+        # and go directly to the next chapter's writer (or assemble).
+        # The writer already has the original critic feedback injected, and
+        # the adversarial read at the end provides quality assurance.
+        if state.revision_light and cur == "writer":
+            if state.current_unit_index + 1 < len(state.units):
+                return "writer"  # next chapter, stay on writer
+            return CLOSING_PHASES[0]  # assemble
         if cur == UNIT_PHASES[-1]:           # last unit phase -> next unit or assemble
             if state.current_unit_index + 1 < len(state.units):
                 return UNIT_PHASES[0]        # next chapter, back to architect
@@ -980,6 +1001,19 @@ async def _exec_editorial_lock(state: RunState, project: str, model_call: ModelC
             "total_items": sum(len(s["items"]) for s in manifest["sections"]),
             "manifest_path": os.path.relpath(mpath, project),
         }
+        # Compute per-chapter word count targets from the total manuscript targets.
+        # The user set word_count_min/max for the ENTIRE manuscript (e.g. 2500-5000).
+        # Now that we know how many chapters there are, compute per-chapter targets
+        # so the writer prompt uses the right number and _is_usable_prose checks
+        # against a reasonable per-chapter floor.
+        total_min = state.word_count_min or 10000
+        total_max = state.word_count_max or total_min * 3
+        state.per_chapter_min = max(state.word_floor, total_min // chapter_count)
+        state.per_chapter_max = total_max // chapter_count
+        state.per_chapter_target = (total_min + total_max) // (2 * chapter_count)
+        # Ensure per-chapter max >= per-chapter min
+        if state.per_chapter_max < state.per_chapter_min:
+            state.per_chapter_max = state.per_chapter_min
     return {"artifact": rel, "manifest": manifest_built, "verdict": verdict, "raw_preview": reply[:400]}
 
 
@@ -1174,6 +1208,13 @@ async def _exec_architect(state: RunState, project: str, model_call: ModelCall) 
             "Output a structured plan — not prose.\n\n"
             + step_instruction
         )
+    target_hint = ""
+    if state.per_chapter_target > 0:
+        target_hint = (
+            f"\nTARGET LENGTH: ~{state.per_chapter_target} words for this {cfg.unit_label} "
+            f"(range: {state.per_chapter_min}–{state.per_chapter_max} words). "
+            f"Allocate word counts per scene accordingly."
+        )
     user = _with_instructions(
         f"{prefix}\n\n"
         f"--- STEP: PLAN {cfg.unit_label.upper()} {chapter} ---\n"
@@ -1181,7 +1222,7 @@ async def _exec_architect(state: RunState, project: str, model_call: ModelCall) 
         f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n"
         f"{_prior_chapter_tail(project, chapter)}\n"
         f"--- END ---\n\n"
-        f"Plan {cfg.unit_label} {chapter} now.",
+        f"Plan {cfg.unit_label} {chapter} now.{target_hint}",
         state,
     )
     reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
@@ -1229,6 +1270,8 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
         f"--- ARCHITECT PLAN ---\n{plan}\n--- END ---\n\n"
         f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n{_prior_chapter_tail(project, chapter)}\n--- END ---\n\n"
         f"Write the full {cfg.unit_label} {chapter} now. "
+        f"Target length: ~{state.per_chapter_target} words for this {cfg.unit_label} "
+        f"(range: {state.per_chapter_min}–{state.per_chapter_max} words). "
         f"Follow the word count target from the architect plan for this {cfg.unit_label}."
         f"{rewrite_note}",
         state,
@@ -1261,7 +1304,7 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
 
         reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
         # Use the per-chapter minimum word count (set by user or format default).
-        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, state.word_count_min))
+        usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, state.per_chapter_min or state.word_floor))
 
         if usable:
             body = strip_artifacts(reply).strip() + "\n"
@@ -1309,16 +1352,25 @@ async def _exec_critics(state: RunState, project: str, model_call: ModelCall) ->
     }
     results = []
     failures = []
+    # Build the shared chapter block ONCE — all critics see the same text.
+    # Per-critic context (voice registers, continuity profiles) goes AFTER
+    # the chapter text so the chapter content is in the shared prefix for
+    # DeepSeek's automatic prefix cache.  Without this, the differing
+    # ctx_block before the chapter text breaks the cache at token ~30,
+    # making the entire chapter text (~1-5K tokens) cache-miss for every
+    # critic call.
+    from .word_count import strip_artifacts as _sa
+    chapter_text = _sa(_read_file(_chapter_rel(chapter, project), project))
+    shared_chapter_block = (
+        f"chapter_hash: {chash}\n\n"
+        f"--- CHAPTER ---\n{chapter_text}\n--- END CHAPTER ---"
+    )
     for ctype in (*critics_mod.CRITIC_TYPES, critics_mod.EDITORIAL_TYPE):
         system = critics_mod._SYSTEM_PROMPTS[ctype]
-        # Build the chapter context the critic runner would have assembled.
-        from .word_count import strip_artifacts as _sa
-        chapter_text = _sa(_read_file(_chapter_rel(chapter, project), project))
         ctx = per_critic_context.get(ctype, "")
-        ctx_block = f"\n{ctx}\n" if ctx else ""
+        ctx_block = f"\n\n{ctx}" if ctx else ""
         user = (
-            f"chapter_hash: {chash}\n\n{ctx_block}"
-            f"--- CHAPTER ---\n{chapter_text}\n--- END CHAPTER ---\n\n"
+            f"{shared_chapter_block}{ctx_block}\n\n"
             f"Review this chapter now. Begin your report with 'chapter_hash: {chash}', "
             f"include a ## Findings section with at least three located findings "
             f"(Line N + quoted span), then VERDICT."
@@ -1519,6 +1571,7 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
         if has_bible and state.units:
             state.current_phase = "writer"
             state.current_unit_index = 0
+            state.revision_light = True
             # Clear prior unit results so the revision loop re-evaluates
             # each chapter fresh (but keeps phase_results like bible/voice).
             state.unit_results = {}
@@ -1625,6 +1678,15 @@ async def _advance_phase_locked(project: str, resolve_call: ModelResolver) -> di
 
     # Record the result.
     _record_result(state, phase, result)
+
+    # Capture per-step cost metrics from openrouter for this phase.
+    try:
+        from app.ai.openrouter import get_cache_metrics
+        step_metrics = get_cache_metrics()
+        if step_metrics:
+            state.cost_log.extend(step_metrics)
+    except Exception:
+        pass  # cost tracking is non-fatal
 
     # ── Post-editorial_lock revision loop ─────────────────────────────────
     # After the editorial_lock phase, check the verdict. If the editorial says
@@ -1758,6 +1820,9 @@ async def _advance_phase_locked(project: str, resolve_call: ModelResolver) -> di
         # If we're crossing from the last unit phase to the next chapter's first,
         # increment the unit index.
         if phase == "verify_unit" and nxt == UNIT_PHASES[0]:
+            state.current_unit_index += 1
+        # Light revision mode: writer → writer means next chapter.
+        if state.revision_light and phase == "writer" and nxt == "writer":
             state.current_unit_index += 1
         # If we're crossing from project phases into the per-unit loop, reset index.
         if phase in PROJECT_PHASES and nxt == UNIT_PHASES[0]:

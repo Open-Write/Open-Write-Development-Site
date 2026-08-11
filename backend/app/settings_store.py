@@ -46,6 +46,7 @@ DEFAULT_SETTINGS: dict = {
     "writer_model": "deepseek/deepseek-v4-flash",
     "critic_model": "deepseek/deepseek-v4-flash",
     "model_routing": {},
+    "fallback_providers": [],
     "planner_model": "",
     "content_mode": "general",
     "cost_tier": "standard",

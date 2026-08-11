@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import os
 import pathlib
 import re
@@ -26,6 +27,60 @@ from app import auth, config, db, settings_store, versions
 from app.pipeline import orchestrator, outputs, critics
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
+
+# ── Cost summary helper ─────────────────────────────────────────────────────
+def _cost_summary(cost_log: list[dict]) -> dict:
+    """Aggregate per-step cost records into a summary for the frontend."""
+    if not cost_log:
+        return {"total_cost_usd": 0, "total_calls": 0, "steps": [], "overall_hit_rate_pct": 0}
+
+    by_step: dict[str, dict] = {}
+    for m in cost_log:
+        step = m.get("step", "unknown")
+        if step not in by_step:
+            by_step[step] = {
+                "step": step, "calls": 0, "prompt_tokens": 0,
+                "cache_hit": 0, "cache_miss": 0, "completion": 0,
+                "cost_usd": 0.0, "elapsed_s": 0.0,
+            }
+        s = by_step[step]
+        s["calls"] += 1
+        s["prompt_tokens"] += m.get("prompt_tokens", 0)
+        s["cache_hit"] += m.get("cache_hit_tokens", 0)
+        s["cache_miss"] += m.get("cache_miss_tokens", 0)
+        s["completion"] += m.get("completion_tokens", 0)
+        s["cost_usd"] += m.get("cost_usd", 0.0)
+        s["elapsed_s"] += m.get("elapsed_s", 0.0)
+
+    steps = []
+    total_hit = 0
+    total_prompt = 0
+    total_cost = 0.0
+    for s in by_step.values():
+        hit_rate = (s["cache_hit"] / s["prompt_tokens"] * 100) if s["prompt_tokens"] else 0
+        steps.append({
+            **s,
+            "hit_rate_pct": round(hit_rate, 1),
+            "cost_usd": round(s["cost_usd"], 6),
+            "elapsed_s": round(s["elapsed_s"], 1),
+        })
+        total_hit += s["cache_hit"]
+        total_prompt += s["prompt_tokens"]
+        total_cost += s["cost_usd"]
+
+    overall_hit = (total_hit / total_prompt * 100) if total_prompt else 0
+    return {
+        "total_cost_usd": round(total_cost, 6),
+        "total_calls": len(cost_log),
+        "total_prompt_tokens": total_prompt,
+        "total_cache_hit": total_hit,
+        "total_cache_miss": total_prompt - total_hit,
+        "overall_hit_rate_pct": round(overall_hit, 1),
+        "steps": sorted(steps, key=lambda x: x["cost_usd"], reverse=True),
+    }
+
+
+log = logging.getLogger(__name__)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -150,7 +205,19 @@ def _resolve_call_model(qualified: str | None):
     return resolved.api_key, resolved.model_name, resolved.base_url
 
 
-def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: str = ""):
+def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: str = "",
+                     fallback_providers: list[tuple[str, str, str]] | None = None):
+    """Build an async model_call(system, user) -> str for the pipeline.
+
+    Retries transient errors on the primary provider. If all retries are
+    exhausted and ``fallback_providers`` is given, tries each fallback in
+    order before raising. This protects against DeepSeek price increases
+    or outages: the fallback chain is resolved from user settings and
+    tested at call time, not at pipeline start.
+
+    ``fallback_providers`` is a list of (api_key, model_name, base_url)
+    tuples, tried in order.
+    """
     from app.ai.openrouter import run_chat
     # Self-hosted models on CPU need much longer timeouts than cloud APIs.
     PIPELINE_CALL_TIMEOUT = 600.0
@@ -159,52 +226,170 @@ def _make_model_call(api_key: str, model_name: str, base_url: str, step_name: st
     # model loading, gateway errors). Client errors (4xx) are raised immediately.
     _RETRYABLE_STATUSES = {502, 503, 504}
 
-    async def model_call(system_prompt: str, user_prompt: str) -> str:
+    # Statuses that should trigger fallback (provider is down or rejecting).
+    _FALLBACK_STATUSES = {401, 402, 429, 502, 503, 504}
+
+    async def _try_provider(p_key: str, p_model: str, p_base: str,
+                            label: str, retries: int = 3) -> str:
+        """Try one provider with retry on transient errors."""
         last_exc = None
-        for attempt in range(5):
+        for attempt in range(retries):
             try:
                 return await run_chat(
-                    api_key, model_name, system_prompt,
+                    p_key, p_model, system_prompt,
                     [{"role": "user", "content": user_prompt}],
-                    temperature=0.4, base_url=base_url,
+                    temperature=0.4, base_url=p_base,
                     timeout=PIPELINE_CALL_TIMEOUT,
                     pipeline_step=step_name,
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in _RETRYABLE_STATUSES:
                     last_exc = exc
-                    if attempt < 4:
+                    if attempt < retries - 1:
                         await asyncio.sleep(min(5 * (2 ** attempt), 40))
                         continue
                 raise
             except httpx.RequestError as exc:
                 last_exc = exc
-                if attempt < 4:
+                if attempt < retries - 1:
                     await asyncio.sleep(min(5 * (2 ** attempt), 40))
         raise last_exc
+
+    async def model_call(system_prompt: str, user_prompt: str) -> str:
+        try:
+            return await _try_provider(api_key, model_name, base_url, "primary")
+        except Exception as primary_exc:
+            # If no fallbacks configured, re-raise immediately.
+            if not fallback_providers:
+                raise
+            # Check if the error is one that should trigger fallback.
+            should_fallback = False
+            if isinstance(primary_exc, httpx.HTTPStatusError):
+                should_fallback = primary_exc.response.status_code in _FALLBACK_STATUSES
+            elif isinstance(primary_exc, (httpx.RequestError, httpx.TimeoutException)):
+                should_fallback = True
+
+            if not should_fallback:
+                raise
+
+            log.warning(
+                "Primary provider failed (%s: %s), trying %d fallback(s)",
+                type(primary_exc).__name__, str(primary_exc)[:200],
+                len(fallback_providers),
+            )
+            # Try each fallback in order.
+            last_fallback_exc = primary_exc
+            for fb_key, fb_model, fb_base in fallback_providers:
+                try:
+                    result = await _try_provider(
+                        fb_key, fb_model, fb_base, "fallback", retries=2,
+                    )
+                    log.info(
+                        "Fallback provider succeeded: model=%s base=%s",
+                        fb_model, fb_base,
+                    )
+                    return result
+                except Exception as fb_exc:
+                    last_fallback_exc = fb_exc
+                    log.warning(
+                        "Fallback also failed (%s), trying next",
+                        type(fb_exc).__name__,
+                    )
+                    continue
+            # All fallbacks exhausted.
+            raise last_fallback_exc
+
     return model_call
 
 
 def _build_phase_resolver():
     """Return a `resolve_for_phase(phase)` callable used by advance-phase and
     the background tasks. Requires user settings to already be bound (via the
-    request context or `settings_store.bind_user_settings`)."""
+    request context or `settings_store.bind_user_settings`).
+
+    If the user has configured fallback_providers in settings, each model call
+    will try the primary provider first and fall back to the configured
+    alternatives on failure. This is the mechanism that protects against
+    DeepSeek outages or unexpected price changes.
+
+    Free-tier providers (GLM, Z.AI) are subject to per-user monthly token caps.
+    When the cap is hit, the guard skips the free-tier provider and uses the
+    first available fallback instead. Set FREE_TIER_DISABLED=1 to disable all
+    free-tier routing instantly.
+    """
+    from app.ai.free_tier_guard import should_block
+
     _cache: dict[str, tuple[str, str, str]] = {}
+    _provider_cache: dict[str, str] = {}  # model_id -> provider_id
 
     def _get_info(mid: str) -> tuple[str, str, str]:
         if mid not in _cache:
             _cache[mid] = _resolve_call_model(mid)
         return _cache[mid]
 
+    def _get_provider_id(mid: str) -> str:
+        """Extract the provider_id from a qualified model id (e.g. 'glm/glm-4-flash' -> 'glm')."""
+        if mid not in _provider_cache:
+            from app.ai.providers import resolve
+            try:
+                resolved = resolve(mid)
+                _provider_cache[mid] = resolved.provider_id
+            except Exception:
+                _provider_cache[mid] = mid.split("/")[0] if "/" in mid else ""
+        return _provider_cache[mid]
+
+    def _get_fallbacks() -> list[tuple[str, str, str]]:
+        """Resolve fallback_providers from settings into (key, model, url) tuples."""
+        settings = settings_store.load_settings()
+        fb_list = settings.get("fallback_providers", [])
+        result = []
+        for fb in fb_list:
+            if not isinstance(fb, dict):
+                continue
+            model_id = fb.get("model", "")
+            if not model_id:
+                continue
+            try:
+                key, name, base = _get_info(model_id)
+                if key and base:
+                    result.append((key, name, base))
+            except Exception:
+                continue
+        return result
+
+    fallbacks = _get_fallbacks()
+
+    # Get the current user ID for free-tier guard checks.
+    user_id = settings_store._current_user_id.get() or ""
+
     def _resolve(phase: str):
         model_id = settings_store.get_model_for_phase(phase)
+
+        # Free-tier guard: if this model is on a free-tier provider and the
+        # user has exhausted their monthly cap, skip to the first fallback.
+        provider_id = _get_provider_id(model_id)
+        if user_id and should_block(user_id, provider_id):
+            if fallbacks:
+                log.warning(
+                    "Free-tier provider %s blocked for user %s (cap exceeded or kill switch). "
+                    "Using fallback: %s",
+                    provider_id, user_id[:8] + "...", fallbacks[0][1],
+                )
+                fb_key, fb_name, fb_base = fallbacks[0]
+                return _make_model_call(fb_key, fb_name, fb_base,
+                                        step_name=f"{phase}-free-tier-fallback",
+                                        fallback_providers=fallbacks[1:] or None)
+
         key, name, base = _get_info(model_id)
-        call = _make_model_call(key, name, base, step_name=phase)
+        call = _make_model_call(key, name, base, step_name=phase,
+                                fallback_providers=fallbacks or None)
         if phase in ("critics", "editorial"):
             author_id = settings_store.get_writer_model()
             if model_id != author_id:
                 a_key, a_name, a_base = _get_info(author_id)
-                author_call = _make_model_call(a_key, a_name, a_base, step_name=f"{phase}-fallback")
+                author_call = _make_model_call(a_key, a_name, a_base,
+                                               step_name=f"{phase}-fallback",
+                                               fallback_providers=fallbacks or None)
 
                 async def _fallback(sys_p: str, usr_p: str) -> str:
                     try:
@@ -384,6 +569,7 @@ async def run_state(project_id: str, current=Depends(auth.get_current_user)):
         "unit_results": {str(k): v for k, v in state.unit_results.items()},
         "revision_chapters": state.revision_chapters,
         "revision_notes": state.revision_notes,
+        "revision_light": state.revision_light,
         "max_chapter_retries": state.max_chapter_retries,
         "editorial_lock_retries": state.editorial_lock_retries,
         "max_editorial_lock_retries": state.max_editorial_lock_retries,
@@ -391,6 +577,10 @@ async def run_state(project_id: str, current=Depends(auth.get_current_user)):
         "word_count_min": state.word_count_min,
         "word_count_max": state.word_count_max,
         "word_target": state.word_target,
+        "per_chapter_min": state.per_chapter_min,
+        "per_chapter_max": state.per_chapter_max,
+        "per_chapter_target": state.per_chapter_target,
+        "cost_summary": _cost_summary(state.cost_log),
         "format": state.format,
         "unit_label": cfg.unit_label,
         "unit_label_plural": cfg.unit_label_plural,

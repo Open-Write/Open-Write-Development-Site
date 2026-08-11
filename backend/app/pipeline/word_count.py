@@ -192,6 +192,44 @@ _GLOB_PATTERN_LINE_RE = re.compile(
 )
 
 
+# Pattern for model-generated chapter/scene/episode headers that appear at the
+# start of writer output.  The assembler adds its own consistent "## Chapter N"
+# header, so any header the model produces at the top of its output would be
+# duplicated in the final manuscript.  This pattern matches:
+#   # Chapter 1, ## Chapter 1, ### Chapter 1
+#   **Chapter 1**
+#   Chapter 1: Title
+#   Scene 1, Episode 1
+# Only applied to the first 3 non-blank lines to avoid removing mid-prose breaks.
+_LEADING_HEADER_RE = re.compile(
+    r'^\s*(?:#{1,3}\s+)?(?:\*{2})?(?:Chapter|Scene|Episode)\s+\d+[^\n]*$',
+    re.IGNORECASE,
+)
+
+
+def _strip_leading_headers(content: str) -> str:
+    """Remove model-generated chapter headers from the first few lines.
+
+    The assembler adds its own consistent headers. Model-generated headers at
+    the start of writer output would duplicate in the final manuscript and
+    read as the "tell" that identifies machine prose.
+    """
+    lines = content.split("\n")
+    result = []
+    headers_stripped = 0
+    blank_after_header = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped and headers_stripped > 0 and blank_after_header == 0:
+            blank_after_header += 1
+            continue  # skip the blank line right after a stripped header
+        if headers_stripped < 3 and _LEADING_HEADER_RE.match(stripped):
+            headers_stripped += 1
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+
 def strip_artifacts(content: str) -> str:
     """Remove pipeline meta-tokens, tool-call scaffolding, and preamble from model output.
 
@@ -199,7 +237,8 @@ def strip_artifacts(content: str) -> str:
     1. Try to extract prose embedded in a write-tool call (keeps the prose).
     2. Apply ARTIFACT_PATTERNS (removes whole blocks with regex).
     3. Strip orphaned XML tags and preamble lines.
-    4. Collapse extra blank lines.
+    4. Strip model-generated chapter headers (the assembler adds its own).
+    5. Collapse extra blank lines.
     """
     content = _extract_prose_from_tool_calls(content)
     for pattern, flags in ARTIFACT_PATTERNS:
@@ -208,6 +247,7 @@ def strip_artifacts(content: str) -> str:
     content = _ORPHAN_TAG_RE.sub('', content)
     content = _JSON_PARAM_LINE_RE.sub('', content)
     content = _GLOB_PATTERN_LINE_RE.sub('', content)
+    content = _strip_leading_headers(content)
     content = re.sub(r'\n{3,}', '\n\n', content)
     return content.strip()
 
