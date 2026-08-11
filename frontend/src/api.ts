@@ -361,6 +361,13 @@ export const api = {
   runArgumentReader: (reviewId: string, body?: { include_amplification?: boolean }) =>
     request<{ readers: { persona_id: string; name: string; output: string }[]; synthesis: { output: string; name: string } | null; amplification: { output: string; name: string } | null; model_used: string }>(
       `/editorial/reviews/${reviewId}/run-argument-reader`, { method: "POST", body: body || {} }),
+  // Decompose: one description → multiple readers + synthesis
+  decomposePersona: (body: { description: string; genre?: string; audience?: string; draft_stage?: string; rubric?: Record<string, unknown> | null }) =>
+    request<{ decomposition_name: string; decomposition_rationale: string; readers: Record<string, unknown>[]; synthesis_focus: string }>(
+      "/editorial/decompose-persona", { method: "POST", body }),
+  decomposeAndRun: (reviewId: string, body: { description: string; genre?: string; audience?: string; draft_stage?: string; rubric?: Record<string, unknown> | null; include_amplification?: boolean }) =>
+    request<{ decomposition_name: string; decomposition_rationale: string; readers: { persona_id: string; name: string; output: string }[]; synthesis: { output: string; name: string } | null; amplification: { output: string; name: string } | null; model_used: string }>(
+      `/editorial/reviews/${reviewId}/decompose-and-run`, { method: "POST", body }),
 
   // Admin
   listApprovedEmails: () =>

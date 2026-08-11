@@ -617,23 +617,34 @@ interface CompiledPersona {
 }
 
 
-// ── Argument Reader v2 Panel ────────────────────────────────────────────────
+// ── Decompose Reader Panel ───────────────────────────────────────────────────
 
 function ArgumentReaderPanel({ reviewId }: { reviewId: string }) {
+  const [description, setDescription] = useState("");
+  const [genre, setGenre] = useState("");
+  const [audience, setAudience] = useState("");
+  const [includeAmp, setIncludeAmp] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<{
+    decomposition_name: string;
+    decomposition_rationale: string;
     readers: { persona_id: string; name: string; output: string }[];
     synthesis: { output: string; name: string } | null;
     amplification: { output: string; name: string } | null;
   } | null>(null);
-  const [includeAmp, setIncludeAmp] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const runBatch = async () => {
+  const runDecompose = async () => {
+    if (!description.trim()) return;
     setRunning(true); setError(""); setResults(null);
     try {
-      const res = await api.runArgumentReader(reviewId, { include_amplification: includeAmp });
+      const res = await api.decomposeAndRun(reviewId, {
+        description: description.trim(),
+        genre: genre.trim() || undefined,
+        audience: audience.trim() || undefined,
+        include_amplification: includeAmp,
+      });
       setResults(res);
     } catch (e) { setError((e as Error).message); }
     finally { setRunning(false); }
@@ -641,29 +652,53 @@ function ArgumentReaderPanel({ reviewId }: { reviewId: string }) {
 
   return (
     <div className="card p-4 space-y-3">
-      <h3 className="text-sm font-semibold text-gray-300">Argument Reader v2</h3>
+      <h3 className="text-sm font-semibold text-gray-300">Multi-Reader Evaluation</h3>
       <p className="text-xs text-gray-500">
-        Four blinded readers evaluate whether your argument survives contact with its target
-        audiences: a congressional staffer, a political-economy academic, a hostile columnist,
-        and a booking producer. A synthesis pass clusters findings across all four.
+        Describe the evaluation perspective you want. The system will decompose it into
+        multiple distinct professional readers, run them all, and synthesize their findings.
       </p>
 
+      <div>
+        <label className="mb-1 block text-xs text-gray-400">What should readers evaluate?</label>
+        <textarea className="input h-20 resize-y text-xs"
+          placeholder={"e.g. How would this book land in US political media?\ne.g. Would a literary journal take this seriously?\ne.g. How would this perform as a podcast segment?"}
+          value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="mb-1 block text-xs text-gray-400">Genre</label>
+          <input className="input text-xs" placeholder="non-fiction"
+            value={genre} onChange={(e) => setGenre(e.target.value)} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-gray-400">Audience</label>
+          <input className="input text-xs" placeholder="policy makers"
+            value={audience} onChange={(e) => setAudience(e.target.value)} />
+        </div>
+      </div>
+
       <div className="flex items-center gap-2 text-xs text-gray-400">
-        <input type="checkbox" id="include-amp" checked={includeAmp}
+        <input type="checkbox" id="decompose-amp" checked={includeAmp}
           onChange={(e) => setIncludeAmp(e.target.checked)} />
-        <label htmlFor="include-amp">Include amplification strategy</label>
+        <label htmlFor="decompose-amp">Include amplification strategy</label>
       </div>
 
       <button className="btn-primary w-full text-xs"
-        onClick={runBatch} disabled={running}>
-        {running ? "Running 4 readers + synthesis…" : "Run Argument Reader v2"}
+        onClick={runDecompose} disabled={running || !description.trim()}>
+        {running ? "Decomposing + running readers…" : "Decompose & Run"}
       </button>
 
       {error && <p className="text-xs text-red-400">{error}</p>}
 
       {results && (
         <div className="space-y-2 border-t border-edge pt-3">
-          <h4 className="text-xs font-semibold text-gray-200">Results</h4>
+          <h4 className="text-xs font-semibold text-gray-200">
+            {results.decomposition_name || "Results"}
+          </h4>
+          {results.decomposition_rationale && (
+            <p className="text-xs text-gray-500 italic">{results.decomposition_rationale}</p>
+          )}
 
           {/* Individual readers */}
           {results.readers.map((r) => (

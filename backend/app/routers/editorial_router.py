@@ -1117,6 +1117,293 @@ async def compile_persona(req: CompilePersonaRequest,
     )
 
 
+# ── Decompose: one description → multiple readers + synthesis ────────────────
+
+class DecomposeRequest(BaseModel):
+    description: str
+    genre: str = ""
+    audience: str = ""
+    draft_stage: str = ""
+    rubric: dict | None = None
+
+
+class DecomposeAndRunRequest(BaseModel):
+    description: str
+    genre: str = ""
+    audience: str = ""
+    draft_stage: str = ""
+    rubric: dict | None = None
+    include_amplification: bool = False
+
+
+@router.post("/decompose-persona")
+async def decompose_persona(req: DecomposeRequest,
+                            current=Depends(auth.get_current_user)):
+    """Decompose a user's description into multiple reader personas.
+
+    The compiler determines how many distinct professional readers are needed
+    to cover the user's stated evaluation domain. Each reader is blinded from
+    the others. A synthesis focus is included for the amalgamation pass.
+    """
+    from app.ai.persona import DECOMPOSE_COMPILER_PROMPT, PersonaSpec
+
+    api_key, model_name, base_url = _resolve_call_model(None)
+
+    user_parts = [f"USER DESCRIPTION: {req.description}"]
+    if req.genre:
+        user_parts.append(f"GENRE: {req.genre}")
+    if req.audience:
+        user_parts.append(f"AUDIENCE: {req.audience}")
+    if req.draft_stage:
+        user_parts.append(f"DRAFT STAGE: {req.draft_stage}")
+    if req.rubric:
+        user_parts.append(f"USER RUBRIC: {json.dumps(req.rubric)}")
+    user_message = "\n\n".join(user_parts)
+
+    max_attempts = 2
+    last_error = ""
+    raw_response = ""
+
+    for attempt in range(max_attempts):
+        try:
+            raw_response = await _run_model_async(
+                DECOMPOSE_COMPILER_PROMPT, user_message,
+                api_key, model_name, base_url, step="decompose-compiler",
+            )
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            raise HTTPException(502, f"Model provider error: {exc}")
+
+        json_str = raw_response.strip()
+        if json_str.startswith("```"):
+            json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+            json_str = re.sub(r"\s*```$", "", json_str)
+
+        try:
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError as exc:
+            last_error = f"Invalid JSON: {exc}"
+            user_message = (
+                f"{user_message}\n\n"
+                f"PREVIOUS ATTEMPT FAILED: The output was not valid JSON. Error: {last_error}\n"
+                f"Output ONLY the JSON object, nothing else."
+            )
+            continue
+
+        # Validate each reader persona
+        readers = parsed.get("readers", [])
+        if not readers:
+            last_error = "No readers in decomposition output"
+            continue
+
+        validated_readers = []
+        validation_errors = []
+        for r in readers:
+            try:
+                # Set created_from from user input
+                r["created_from"] = req.description
+                spec = PersonaSpec(**r)
+                validated_readers.append(spec.model_dump())
+            except Exception as exc:
+                validation_errors.append(f"Reader '{r.get('name', '?')}': {exc}")
+
+        if validation_errors:
+            last_error = "; ".join(validation_errors)
+            user_message = (
+                f"{user_message}\n\n"
+                f"PREVIOUS ATTEMPT FAILED: {last_error}\n"
+                f"Fix the schema violations and output ONLY the JSON."
+            )
+            continue
+
+        return {
+            "decomposition_name": parsed.get("decomposition_name", ""),
+            "decomposition_rationale": parsed.get("decomposition_rationale", ""),
+            "readers": validated_readers,
+            "synthesis_focus": parsed.get("synthesis_focus", ""),
+            "raw_response": raw_response,
+        }
+
+    raise HTTPException(400, f"Decompose failed after {max_attempts} attempts: {last_error}")
+
+
+@router.post("/reviews/{review_id}/decompose-and-run")
+async def decompose_and_run(
+    review_id: str,
+    req: DecomposeAndRunRequest,
+    current=Depends(auth.get_current_user),
+):
+    """Decompose a user's description into multiple readers, run them all in
+    parallel, then run the synthesis pass. One call does everything.
+
+    This is the general-purpose version of the Argument Reader batch. The
+    compiler decides how many perspectives are needed based on the user's
+    description. Each reader is blinded. Synthesis amalgamates all reports.
+    """
+    import asyncio as _asyncio
+    from app.ai.persona import (
+        BUILTIN_PERSONAS, PersonaSpec, assemble_review_prompt,
+        GLOBAL_PREAMBLE, _render_persona_for_prompt,
+        ARGUMENT_PREAMBLE, ARGUMENT_FINDINGS_JSON_CONTRACT,
+    )
+
+    row = db.query_one(
+        "SELECT id, current_content, title FROM editorial_reviews WHERE id = %s AND user_id = %s",
+        (review_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Review not found.")
+
+    manuscript = row["current_content"]
+    api_key, model_name, base_url = _resolve_call_model(None)
+
+    # Step 1: Decompose
+    decompose_result = await decompose_persona(
+        DecomposeRequest(
+            description=req.description,
+            genre=req.genre,
+            audience=req.audience,
+            draft_stage=req.draft_stage,
+            rubric=req.rubric,
+        ),
+        current=current,
+    )
+
+    readers = decompose_result["readers"]
+    synthesis_focus = decompose_result.get("synthesis_focus", "")
+
+    # Step 2: Warm cache
+    from app.ai.persona import assemble_cache_warmup_prompt
+    warmup_system, warmup_user = assemble_cache_warmup_prompt(manuscript)
+    try:
+        from app.ai.openrouter import run_chat
+        await run_chat(
+            api_key=api_key, model_id=model_name, base_url=base_url,
+            system_prompt=warmup_system, messages=[{"role": "user", "content": warmup_user}],
+            temperature=0.1, pipeline_step="cache-warmup",
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        pass
+
+    # Step 3: Run all readers in parallel
+    async def _run_one(persona_dict: dict) -> dict:
+        spec = PersonaSpec(**persona_dict)
+        system, user = assemble_review_prompt(manuscript, spec, is_argument_reader=True)
+        try:
+            reply = await _run_model_async(system, user, api_key, model_name, base_url,
+                                           step=f"decompose-reader:{spec.persona_id}")
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            reply = f"ERROR: {exc}"
+        return {"persona_id": spec.persona_id, "name": spec.name, "output": reply}
+
+    results = await _asyncio.gather(*[_run_one(r) for r in readers])
+
+    # Save each result
+    for r in results:
+        db.execute(
+            "INSERT INTO editorial_runs "
+            "(review_id, user_id, persona_id, persona_name, output, severity) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (review_id, current["id"], r["persona_id"], r["name"], r["output"], 4),
+        )
+        db.execute(
+            "INSERT INTO editorial_review_reports (review_id, report_type, report, verdict) "
+            "VALUES (%s, %s, %s, %s)",
+            (review_id, f"decompose:{r['name']}", r["output"], "REVIEW"),
+        )
+
+    # Step 4: Synthesis
+    synthesis_output = ""
+    # Build synthesis input
+    report_parts = []
+    for r in results:
+        report_parts.append(f"--- {r['name'].upper()} REPORT ---\n{r['output']}\n--- END REPORT ---")
+    all_reports = "\n\n".join(report_parts)
+
+    synthesis_persona_block = (
+        "You are synthesizing multiple blinded reader reports on the same manuscript. "
+        "You have not read the manuscript and must not speculate beyond what the reports contain.\n\n"
+        f"SYNTHESIS FOCUS: {synthesis_focus}\n\n"
+        "1. CONVERGENCE — findings raised independently by 2+ readers with different interests.\n"
+        "2. DIVERGENCE — direct contradictions. Do not resolve; state what would settle each.\n"
+        "3. ROOT CAUSES — cluster findings by underlying cause.\n"
+        "4. LOAD-BEARING FAILURES — findings that compromise arguments beyond their own location.\n"
+        "5. BLIND SPOT CHECK — what none of the readers raised that their combined rubrics should have caught."
+    )
+
+    synthesis_system = GLOBAL_PREAMBLE
+    synthesis_user = (
+        f"--- READER REPORTS ---\n{all_reports}\n--- END REPORTS ---\n\n"
+        f"--- SYNTHESIS INSTRUCTIONS ---\n{synthesis_persona_block}\n--- END INSTRUCTIONS ---\n\n"
+        f"TASK: Synthesize the blinded reader reports above. "
+        f"Produce a prose report addressing each synthesis section. "
+        f"Then append the FINDINGS JSON block with clusters across all readers."
+        f"{ARGUMENT_FINDINGS_JSON_CONTRACT}"
+    )
+
+    try:
+        synthesis_output = await _run_model_async(
+            synthesis_system, synthesis_user, api_key, model_name, base_url,
+            step="decompose-synthesis",
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        synthesis_output = f"ERROR: {exc}"
+
+    db.execute(
+        "INSERT INTO editorial_runs "
+        "(review_id, user_id, persona_id, persona_name, output, severity) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (review_id, current["id"], "synthesis", "Synthesis", synthesis_output, 4),
+    )
+    db.execute(
+        "INSERT INTO editorial_review_reports (review_id, report_type, report, verdict) "
+        "VALUES (%s, %s, %s, %s)",
+        (review_id, "decompose:Synthesis", synthesis_output, "REVIEW"),
+    )
+
+    # Step 5: Optional amplification
+    amplification_output = ""
+    if req.include_amplification and synthesis_output:
+        amp_system = GLOBAL_PREAMBLE
+        amp_user = (
+            f"--- SYNTHESIS REPORT ---\n{synthesis_output}\n--- END SYNTHESIS ---\n\n"
+            "You are advising on placement strategy for a manuscript you have not read. "
+            "You have only the synthesis of blinded reader reports.\n\n"
+            "Constraints:\n"
+            "- Address load-bearing findings before proposing any placement.\n"
+            "- Assume indifference is the default outcome.\n"
+            "- Name who is made worse off if this argument spreads.\n"
+            "- Do not recommend an outlet without stating their prior position on the thesis."
+        )
+        try:
+            amplification_output = await _run_model_async(
+                amp_system, amp_user, api_key, model_name, base_url,
+                step="decompose-amplification",
+            )
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            amplification_output = f"ERROR: {exc}"
+
+        db.execute(
+            "INSERT INTO editorial_runs "
+            "(review_id, user_id, persona_id, persona_name, output, severity) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (review_id, current["id"], "amplification", "Amplification Strategy", amplification_output, 3),
+        )
+
+    db.execute("UPDATE editorial_reviews SET updated_at = NOW() WHERE id = %s", (review_id,))
+
+    return {
+        "decomposition_name": decompose_result.get("decomposition_name", ""),
+        "decomposition_rationale": decompose_result.get("decomposition_rationale", ""),
+        "readers": [
+            {"persona_id": r["persona_id"], "name": r["name"], "output": r["output"]}
+            for r in results
+        ],
+        "synthesis": {"output": synthesis_output, "name": "Synthesis"} if synthesis_output else None,
+        "amplification": {"output": amplification_output, "name": "Amplification Strategy"} if amplification_output else None,
+        "model_used": model_name,
+    }
+
+
 # ── Custom persona review execution ──────────────────────────────────────────
 
 @router.post("/reviews/{review_id}/run-persona")
