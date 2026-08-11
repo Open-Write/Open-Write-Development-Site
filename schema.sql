@@ -116,3 +116,40 @@ CREATE INDEX IF NOT EXISTS idx_editorial_review_versions
 
 CREATE INDEX IF NOT EXISTS idx_editorial_review_reports
     ON editorial_review_reports (review_id, report_type);
+
+-- ── Custom Adversarial Reader Personas ──────────────────────────────────────
+-- Stores user-defined reader personas for the editorial review system.
+-- Each persona is a validated JSON spec that defines who reads, what they
+-- evaluate, what they ignore, and how they structure their output.
+CREATE TABLE IF NOT EXISTS editorial_personas (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+    persona_json  TEXT NOT NULL,
+    is_builtin    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ DEFAULT now(),
+    updated_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_personas_user
+    ON editorial_personas (user_id, updated_at DESC);
+
+-- ── Editorial Review Runs (per-persona executions against a review) ─────────
+-- Tracks each execution of a persona against a review, storing the assembled
+-- prompt for cache analysis and the rendered output.
+CREATE TABLE IF NOT EXISTS editorial_runs (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_id     UUID REFERENCES editorial_reviews(id) ON DELETE CASCADE,
+    user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+    persona_id    UUID REFERENCES editorial_personas(id) ON DELETE SET NULL,
+    persona_name  TEXT NOT NULL DEFAULT '',
+    rubric_json   TEXT,
+    output        TEXT NOT NULL DEFAULT '',
+    severity      INTEGER DEFAULT 3,
+    cache_hit_tokens  INTEGER DEFAULT 0,
+    cache_miss_tokens INTEGER DEFAULT 0,
+    cost_usd      NUMERIC(10, 6) DEFAULT 0,
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_runs_review
+    ON editorial_runs (review_id, created_at DESC);

@@ -830,3 +830,426 @@ async def get_version(review_id: str, version_number: int,
         "instructions": ver["instructions"],
         "created_at": ver["created_at"].isoformat() if ver.get("created_at") else None,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CUSTOM ADVERSARIAL READER PERSONAS
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Request models ───────────────────────────────────────────────────────────
+
+class CompilePersonaRequest(BaseModel):
+    description: str
+    genre: str = ""
+    audience: str = ""
+    draft_stage: str = ""
+    rubric: dict | None = None
+
+
+class SavePersonaRequest(BaseModel):
+    persona: dict  # the full persona JSON spec
+
+
+class RunPersonaRequest(BaseModel):
+    persona_id: str
+    rubric: dict | None = None  # optional override rubric at execution time
+    severity: int | None = None  # optional severity override
+
+
+class RunMultiplePersonasRequest(BaseModel):
+    persona_ids: list[str]
+    rubric: dict | None = None
+
+
+# ── Persona CRUD ─────────────────────────────────────────────────────────────
+
+@router.get("/personas")
+async def list_personas(current=Depends(auth.get_current_user)):
+    """List all personas for the current user plus built-in personas."""
+    from app.ai.persona import BUILTIN_PERSONAS
+
+    rows = db.query_all(
+        "SELECT id, persona_json, is_builtin, created_at, updated_at "
+        "FROM editorial_personas WHERE user_id = %s ORDER BY updated_at DESC",
+        (current["id"],),
+    )
+    user_personas = []
+    for r in rows:
+        spec = json.loads(r["persona_json"])
+        user_personas.append({
+            "id": str(r["id"]),
+            "persona_id": spec.get("persona_id", ""),
+            "name": spec.get("name", ""),
+            "one_line": spec.get("one_line", ""),
+            "severity": spec.get("severity", 3),
+            "is_builtin": r["is_builtin"],
+            "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+        })
+
+    builtin = []
+    for p in BUILTIN_PERSONAS:
+        builtin.append({
+            "id": p["persona_id"],
+            "persona_id": p["persona_id"],
+            "name": p["name"],
+            "one_line": p["one_line"],
+            "severity": p["severity"],
+            "is_builtin": True,
+            "created_at": None,
+        })
+
+    return {"personas": builtin + user_personas}
+
+
+@router.get("/personas/{persona_db_id}")
+async def get_persona(persona_db_id: str, current=Depends(auth.get_current_user)):
+    """Get a full persona spec by database ID."""
+    from app.ai.persona import BUILTIN_PERSONAS
+
+    # Check built-in first
+    for p in BUILTIN_PERSONAS:
+        if p["persona_id"] == persona_db_id:
+            return {"persona": p, "is_builtin": True}
+
+    # Check user's personas
+    row = db.query_one(
+        "SELECT id, persona_json, is_builtin, created_at, updated_at "
+        "FROM editorial_personas WHERE id = %s AND user_id = %s",
+        (persona_db_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Persona not found.")
+    spec = json.loads(row["persona_json"])
+    return {
+        "persona": spec,
+        "is_builtin": row["is_builtin"],
+        "db_id": str(row["id"]),
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+    }
+
+
+@router.post("/personas")
+async def save_persona(req: SavePersonaRequest,
+                       current=Depends(auth.get_current_user)):
+    """Save a persona spec to the user's library."""
+    from app.ai.persona import PersonaSpec
+
+    try:
+        spec = PersonaSpec(**req.persona)
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid persona spec: {exc}")
+
+    row = db.execute(
+        "INSERT INTO editorial_personas (user_id, persona_json, is_builtin) "
+        "VALUES (%s, %s, FALSE) RETURNING id, created_at",
+        (current["id"], spec.model_dump_json()),
+    )
+    return {
+        "id": str(row["id"]),
+        "persona_id": spec.persona_id,
+        "name": spec.name,
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+@router.put("/personas/{persona_db_id}")
+async def update_persona(persona_db_id: str, req: SavePersonaRequest,
+                         current=Depends(auth.get_current_user)):
+    """Update an existing persona."""
+    from app.ai.persona import PersonaSpec
+
+    row = db.query_one(
+        "SELECT id FROM editorial_personas WHERE id = %s AND user_id = %s",
+        (persona_db_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Persona not found.")
+
+    try:
+        spec = PersonaSpec(**req.persona)
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid persona spec: {exc}")
+
+    db.execute(
+        "UPDATE editorial_personas SET persona_json = %s, updated_at = NOW() WHERE id = %s",
+        (spec.model_dump_json(), persona_db_id),
+    )
+    return {"updated": True, "persona_id": spec.persona_id, "name": spec.name}
+
+
+@router.delete("/personas/{persona_db_id}")
+async def delete_persona(persona_db_id: str, current=Depends(auth.get_current_user)):
+    """Delete a persona from the user's library."""
+    row = db.query_one(
+        "SELECT id FROM editorial_personas WHERE id = %s AND user_id = %s",
+        (persona_db_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Persona not found.")
+    db.execute("DELETE FROM editorial_personas WHERE id = %s", (persona_db_id,))
+    return {"deleted": True}
+
+
+@router.post("/personas/import")
+async def import_persona(body: dict, current=Depends(auth.get_current_user)):
+    """Import a persona from JSON (export/share workflow)."""
+    from app.ai.persona import PersonaSpec
+
+    try:
+        spec = PersonaSpec(**body)
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid persona spec: {exc}")
+
+    row = db.execute(
+        "INSERT INTO editorial_personas (user_id, persona_json, is_builtin) "
+        "VALUES (%s, %s, FALSE) RETURNING id, created_at",
+        (current["id"], spec.model_dump_json()),
+    )
+    return {"id": str(row["id"]), "name": spec.name}
+
+
+# ── Compiler ─────────────────────────────────────────────────────────────────
+
+@router.post("/compile-persona")
+async def compile_persona(req: CompilePersonaRequest,
+                          current=Depends(auth.get_current_user)):
+    """Compile a freeform description into a structured persona spec.
+
+    The compiler produces a draft persona spec that the user can review and
+    edit before saving. It infers out_of_scope even when unstated.
+    """
+    from app.ai.persona import (
+        COMPILER_SYSTEM_PROMPT, CompileResult, PersonaSpec,
+        check_rubric_scope_conflict,
+    )
+
+    api_key, model_name, base_url = _resolve_call_model(None)
+
+    # Build the user message with context fields.
+    user_parts = [f"USER DESCRIPTION: {req.description}"]
+    if req.genre:
+        user_parts.append(f"GENRE: {req.genre}")
+    if req.audience:
+        user_parts.append(f"AUDIENCE: {req.audience}")
+    if req.draft_stage:
+        user_parts.append(f"DRAFT STAGE: {req.draft_stage}")
+    if req.rubric:
+        user_parts.append(f"USER RUBRIC: {json.dumps(req.rubric)}")
+    user_message = "\n\n".join(user_parts)
+
+    # Call the compiler with retry on schema violation.
+    max_attempts = 2
+    last_error = ""
+    raw_response = ""
+
+    for attempt in range(max_attempts):
+        try:
+            raw_response = await _run_model_async(
+                COMPILER_SYSTEM_PROMPT, user_message,
+                api_key, model_name, base_url, step="persona-compiler",
+            )
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            raise HTTPException(502, f"Model provider error: {exc}")
+
+        # Extract JSON from the response (handle markdown fences).
+        json_str = raw_response.strip()
+        if json_str.startswith("```"):
+            json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+            json_str = re.sub(r"\s*```$", "", json_str)
+
+        try:
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError as exc:
+            last_error = f"Invalid JSON: {exc}"
+            # Retry with the error message appended.
+            user_message = (
+                f"{user_message}\n\n"
+                f"PREVIOUS ATTEMPT FAILED: The output was not valid JSON. "
+                f"Error: {last_error}\n"
+                f"Output ONLY the JSON object, nothing else."
+            )
+            continue
+
+        # If the response includes a top-level "warnings" array, extract it.
+        compiler_warnings = parsed.pop("warnings", [])
+
+        try:
+            spec = PersonaSpec(**parsed)
+        except Exception as exc:
+            last_error = f"Schema validation failed: {exc}"
+            user_message = (
+                f"{user_message}\n\n"
+                f"PREVIOUS ATTEMPT FAILED: {last_error}\n"
+                f"Fix the schema violations and output ONLY the JSON."
+            )
+            continue
+
+        # Check rubric/out_of_scope conflicts.
+        rubric = req.rubric or parsed.get("rubric")
+        if rubric:
+            scope_warnings = check_rubric_scope_conflict(rubric, spec.out_of_scope)
+            compiler_warnings.extend(scope_warnings)
+
+        return CompileResult(
+            persona=spec,
+            warnings=compiler_warnings,
+            raw_response=raw_response,
+        )
+
+    return CompileResult(
+        error=f"Compiler failed after {max_attempts} attempts: {last_error}",
+        raw_response=raw_response,
+    )
+
+
+# ── Custom persona review execution ──────────────────────────────────────────
+
+@router.post("/reviews/{review_id}/run-persona")
+async def run_persona_review(review_id: str, req: RunPersonaRequest,
+                             current=Depends(auth.get_current_user)):
+    """Run a custom persona against a saved review.
+
+    Uses the §4 cache-optimized prompt assembly: preamble → manuscript →
+    persona → rubric → task. The manuscript is ingested at cache-miss rates
+    exactly once per work; subsequent persona runs against it hit cache.
+    """
+    from app.ai.persona import (
+        BUILTIN_PERSONAS, PersonaSpec, assemble_review_prompt,
+    )
+
+    row = db.query_one(
+        "SELECT id, current_content, title FROM editorial_reviews WHERE id = %s AND user_id = %s",
+        (review_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Review not found.")
+
+    # Resolve the persona spec.
+    spec = None
+    persona_name = ""
+
+    # Check built-in personas
+    for p in BUILTIN_PERSONAS:
+        if p["persona_id"] == req.persona_id:
+            spec = PersonaSpec(**p)
+            persona_name = p["name"]
+            break
+
+    # Check user's saved personas
+    if spec is None:
+        persona_row = db.query_one(
+            "SELECT persona_json FROM editorial_personas WHERE id = %s AND user_id = %s",
+            (req.persona_id, current["id"]),
+        )
+        if persona_row:
+            spec = PersonaSpec(**json.loads(persona_row["persona_json"]))
+            persona_name = spec.name
+
+    if spec is None:
+        raise HTTPException(404, f"Persona not found: {req.persona_id}")
+
+    # Apply severity override if provided.
+    if req.severity is not None:
+        spec.severity = max(1, min(5, req.severity))
+
+    # Assemble the prompt in §4 order.
+    manuscript = row["current_content"]
+    system, user = assemble_review_prompt(manuscript, spec, rubric=req.rubric)
+
+    api_key, model_name, base_url = _resolve_call_model(None)
+
+    try:
+        reply = await _run_model_async(system, user, api_key, model_name, base_url,
+                                       step="editorial-persona")
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise HTTPException(502, f"Model provider error: {exc}")
+
+    # Save the run.
+    run_row = db.execute(
+        "INSERT INTO editorial_runs "
+        "(review_id, user_id, persona_id, persona_name, rubric_json, output, severity) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id, created_at",
+        (review_id, current["id"],
+         req.persona_id if len(req.persona_id) > 20 else None,  # only store UUID refs
+         persona_name,
+         json.dumps(req.rubric) if req.rubric else None,
+         reply, spec.severity),
+    )
+
+    # Also save as a report for backward compatibility with the existing reports tab.
+    db.execute(
+        "INSERT INTO editorial_review_reports (review_id, report_type, report, verdict) "
+        "VALUES (%s, %s, %s, %s)",
+        (review_id, f"persona:{persona_name}", reply, "REVIEW"),
+    )
+    db.execute("UPDATE editorial_reviews SET updated_at = NOW() WHERE id = %s", (review_id,))
+
+    return {
+        "run_id": str(run_row["id"]),
+        "persona_name": persona_name,
+        "output": reply,
+        "severity": spec.severity,
+        "model_used": model_name,
+    }
+
+
+@router.post("/reviews/{review_id}/warm-cache")
+async def warm_cache(review_id: str, current=Depends(auth.get_current_user)):
+    """Warm the DeepSeek cache for a review's manuscript.
+
+    Issues a minimal call with the preamble + manuscript so the prefix is
+    cached before fan-out to multiple personas. This prevents paying full
+    manuscript ingestion N times when running N personas.
+    """
+    from app.ai.persona import assemble_cache_warmup_prompt
+
+    row = db.query_one(
+        "SELECT id, current_content FROM editorial_reviews WHERE id = %s AND user_id = %s",
+        (review_id, current["id"]),
+    )
+    if not row:
+        raise HTTPException(404, "Review not found.")
+
+    system, user = assemble_cache_warmup_prompt(row["current_content"])
+    api_key, model_name, base_url = _resolve_call_model(None)
+
+    try:
+        # Use a low max_tokens to minimize cost — we just want the prefix cached.
+        from app.ai.openrouter import run_chat
+        await run_chat(
+            api_key=api_key, model_id=model_name, base_url=base_url,
+            system_prompt=system, messages=[{"role": "user", "content": user}],
+            temperature=0.1, pipeline_step="cache-warmup",
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        pass  # non-fatal — the real calls will still work, just without cache benefit
+
+    return {"warmed": True}
+
+
+@router.get("/reviews/{review_id}/runs")
+async def list_runs(review_id: str, current=Depends(auth.get_current_user)):
+    """List all persona runs for a review (for comparison view)."""
+    rows = db.query_all(
+        "SELECT id, persona_name, severity, output, cache_hit_tokens, "
+        "cache_miss_tokens, cost_usd, created_at "
+        "FROM editorial_runs WHERE review_id = %s AND user_id = %s ORDER BY created_at DESC",
+        (review_id, current["id"]),
+    )
+    return {
+        "runs": [
+            {
+                "id": str(r["id"]),
+                "persona_name": r["persona_name"],
+                "severity": r["severity"],
+                "output": r["output"],
+                "cache_hit_tokens": r["cache_hit_tokens"],
+                "cache_miss_tokens": r["cache_miss_tokens"],
+                "cost_usd": float(r["cost_usd"]) if r["cost_usd"] else 0,
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in rows
+        ]
+    }
