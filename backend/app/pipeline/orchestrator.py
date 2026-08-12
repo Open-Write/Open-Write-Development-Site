@@ -377,6 +377,8 @@ class RunState:
     max_editorial_lock_retries: int = 2  # max editorial revision rounds before force-advancing
     cost_log: list[dict] = field(default_factory=list)  # per-step cost records from openrouter
     revision_light: bool = False  # skip per-chapter critics during revision (writer + adversarial only)
+    writer_model: str = ""  # model used for writer (for capacity lookup)
+    default_model: str = ""  # default model for the run
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -421,6 +423,8 @@ class RunState:
             max_editorial_lock_retries=int(d.get("max_editorial_lock_retries", 2)),
             cost_log=list(d.get("cost_log", [])),
             revision_light=d.get("revision_light", False),
+            writer_model=d.get("writer_model", ""),
+            default_model=d.get("default_model", ""),
         )
 
 
@@ -1362,23 +1366,34 @@ async def _invoke_evaluator(
 
     # Action space by scope level
     if scope == 1:
-        action_space = ["retry_writer_expand", "retry_writer_dramatize", "amend_brief"]
+        action_space = ["retry_writer_expand", "retry_writer_dramatize",
+                        "amend_brief", "continue_chapter", "accept_rebalance"]
     elif scope >= 2:
-        action_space = ["retry_writer_expand", "retry_writer_dramatize", "amend_brief",
-                        "replan_chapter", "halt_human"]
+        action_space = ["retry_writer_expand", "retry_writer_dramatize",
+                        "amend_brief", "continue_chapter", "replan_chapter",
+                        "accept_rebalance", "halt_human"]
     else:
-        action_space = ["retry_writer_expand"]
+        action_space = ["retry_writer_expand", "continue_chapter"]
 
-    # Check if accept_rebalance is available
+    # Check if accept_rebalance is available (budget can absorb the deficit)
     budget = state.budget_ledger
     can_rebalance = budget.get("unassigned_deficit", 0) == 0
-    if can_rebalance:
-        action_space.append("accept_rebalance")
+    if not can_rebalance and "accept_rebalance" in action_space:
+        action_space.remove("accept_rebalance")
+
+    # Get model output capacity for the evidence packet
+    from app.ai.openrouter import get_model_max_completion
+    model_name = state.writer_model or state.default_model or ""
+    max_completion = get_model_max_completion(model_name)
+    approx_max_words = int(max_completion * 0.7)  # ~0.7 words per token after stripping
 
     # Build the evidence summary
     evidence_lines = []
     evidence_lines.append(f"CHAPTER: {chapter}")
     evidence_lines.append(f"TARGET: {target} words")
+    evidence_lines.append(f"FLOOR: {alloc.get('min', state.per_chapter_min or state.word_floor)} words")
+    evidence_lines.append(f"MODEL OUTPUT CAPACITY: ~{approx_max_words} words per call "
+                          f"(model={model_name}, max_completion={max_completion} tokens)")
     evidence_lines.append(f"SCOPE LEVEL: {scope}")
     evidence_lines.append(f"FORBIDDEN VERDICTS: {', '.join(forbidden) if forbidden else 'none'}")
     evidence_lines.append(f"ACTION SPACE: {', '.join(action_space)}")
@@ -1418,30 +1433,48 @@ async def _invoke_evaluator(
         "You are the Evaluator for a long-form fiction drafting pipeline. A node has "
         "failed repeated generation attempts. Your job is to determine WHERE the fault "
         "lives and route the work there with a patch attached. You do not write prose.\n\n"
-        "THE THREE ROOT CAUSES OF SHORT OUTPUT:\n"
-        "1. MATERIAL STARVATION — the brief doesn't contain enough events. "
-        "Signature: high beat coverage, coherent draft that simply ends. "
-        "Route: amend the brief.\n"
+        "THE FOUR ROOT CAUSES OF SHORT OUTPUT:\n\n"
+        "1. MATERIAL STARVATION — the brief doesn't contain enough events to fill the target. "
+        "Signature: high beat coverage, coherent draft that simply ends. The draft is complete "
+        "and small. The word count is CONSISTENTLY WELL BELOW the model's output capacity.\n"
+        "Route: amend the brief. Add specific events, complications, reversals.\n\n"
         "2. EXECUTION COMPRESSION — the brief has enough material; the Writer summarized. "
-        "Signature: beats covered but scene_summary_ratio high, dialogue_ratio low. "
-        "Route: retry the Writer with a directive.\n"
-        "3. BUDGET ERROR — the target is wrong. The draft is tight and complete. "
-        "Route: accept and rebalance.\n\n"
+        "Signature: beats covered but scene_summary_ratio high, dialogue_ratio low, "
+        "time-skip connectives present. Word count is below model capacity.\n"
+        "Route: retry the Writer with a directive naming which beats to dramatize.\n\n"
+        "3. OUTPUT CAPACITY LIMIT — the model produced as many words as it can in one call "
+        "but the target requires more. "
+        "Signature: word count is CONSISTENTLY near the MODEL OUTPUT CAPACITY (shown in evidence), "
+        "delta_trend is FLAT across attempts (same word count every time), "
+        "beat coverage is reasonable, prose is coherent. "
+        "The draft is NOT bad — it is GOOD BUT SHORT because the model ran out of output tokens.\n"
+        "Route: continue_chapter. The system will send the partial draft back to the model "
+        "and ask it to continue from where it left off. This is cheaper than rewriting.\n\n"
+        "4. BUDGET ERROR — the target is wrong for the material. The draft is tight, complete, "
+        "well-formed, and good. Beat coverage full. No summary mode. It simply wanted to be shorter "
+        "than the target, AND it is below the model's output capacity (so it's not a capacity issue).\n"
+        "Route: accept and rebalance. Some scenes want fewer words.\n\n"
+        "CRITICAL: If the word count is near the model output capacity and delta_trend is flat, "
+        "the root cause is OUTPUT CAPACITY LIMIT, not material starvation. Do not amend the brief "
+        "when the model simply cannot produce enough words — that wastes a retry on a problem "
+        "the brief cannot solve.\n\n"
         "RULES:\n"
         "- Any action in forbidden_verdicts is unavailable.\n"
         "- Choose only from the action space given.\n"
         "- Every diagnosis must cite specific evidence.\n"
         "- Your patch must be the finished artifact — the actual directive or replacement brief.\n"
-        "- When amending a brief, add MATERIAL (events, turns, obstacles), not adjectives.\n\n"
+        "- When amending a brief, add MATERIAL (events, turns, obstacles), not adjectives.\n"
+        "- When recommending continue_chapter, your patch should contain a brief note about "
+        "what the continuation should focus on (e.g. 'Continue the confrontation scene').\n\n"
         "Return ONLY valid JSON:\n"
         '{"verdict_id": "string", "node_id": "ch' + str(chapter) + '", '
         '"scope_level": ' + str(scope) + ', '
-        '"diagnosis": {"root_cause": "material_starvation | execution_compression | budget_error", '
+        '"diagnosis": {"root_cause": "material_starvation | execution_compression | output_capacity_limit | budget_error", '
         '"confidence": 0.0, "reasoning": "string"}, '
         '"evidence": [{"type": "metric | span", "reference": "string", "observation": "string"}], '
         '"action": "' + ' | '.join(action_space) + '", '
         '"target_station": "writer | architect | human", '
-        '"patch": {"type": "writer_directive | brief_replacement | none", "content": "string"}, '
+        '"patch": {"type": "writer_directive | brief_replacement | continuation_note | none", "content": "string"}, '
         '"forbidden_next": ["string"], "escalate_if_fails": true}\n\n'
         "No preamble, no markdown fences. Only the JSON."
     )
@@ -1648,6 +1681,103 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
                     # This is a more expensive operation — only at scope 2+
                     # For now, fall through to the stock retry
                     pass
+
+                elif action == "continue_chapter":
+                    # The Evaluator determined the model hit its output capacity limit.
+                    # Use the continuation pass: send the partial draft back and ask
+                    # the model to continue from where it left off.
+                    from .word_count import strip_artifacts as _sa_cont
+                    last_clean = _sa_cont(attempt_metrics[-1].get("raw_reply", "") if attempt_metrics else "")
+                    if not last_clean:
+                        # Read the most recent draft from disk
+                        draft_path_cont = os.path.join(project, cfg.unit_dir)
+                        if os.path.isdir(draft_path_cont):
+                            import glob as _glob_cont
+                            drafts_cont = sorted(_glob_cont.glob(os.path.join(draft_path_cont, f"{chapter:03d}_*.md")))
+                            if drafts_cont:
+                                with open(drafts_cont[-1], "r", encoding="utf-8") as f:
+                                    last_clean = _sa_cont(f.read())
+
+                    if last_clean and len(last_clean.split()) >= 1000:
+                        continuation_note = patch_content or "Continue the narrative seamlessly."
+                        continuation_prompt = (
+                            f"{prefix}\n\n"
+                            f"--- STEP: CONTINUE {cfg.unit_label.upper()} {chapter} ---\n"
+                            f"The chapter is incomplete. Here is what has been written so far:\n\n"
+                            f"--- PARTIAL {cfg.unit_label.upper()} ---\n{last_clean}\n--- END PARTIAL ---\n\n"
+                            f"Continue the narrative seamlessly from where it left off. "
+                            f"Do NOT repeat any content. Do NOT start a new chapter. "
+                            f"{continuation_note}\n"
+                            f"Target: add ~{target - len(last_clean.split())} more words."
+                        )
+                        cont_user = _with_instructions(continuation_prompt, state)
+                        cont_reply = await model_call(_GLOBAL_SYSTEM_PROMPT, cont_user)
+                        cont_clean = _sa_cont(cont_reply)
+                        combined_wc = len(last_clean.split()) + len(cont_clean.split())
+                        log.info("Writer ch%d: Evaluator continue_chapter — "
+                                 "partial=%d + continuation=%d = combined=%d (target=%d)",
+                                 chapter, len(last_clean.split()), len(cont_clean.split()),
+                                 combined_wc, target)
+                        if combined_wc >= max(MIN_PROSE_WORDS, chapter_floor):
+                            body = last_clean.strip() + "\n\n" + cont_clean.strip() + "\n"
+                            rel = _write_file(_unit_rel(chapter, state), project, body)
+                            from .word_count import count_words
+                            wc = count_words(os.path.join(project, rel))
+                            return {"artifact": rel, "chapter": chapter, "word_count": wc,
+                                    "raw_preview": (last_clean[:200] + "..." + cont_clean[:200])}
+                        else:
+                            log.info("Writer ch%d: continue_chapter still short (%d < %d)",
+                                     chapter, combined_wc, chapter_floor)
+                    else:
+                        log.warning("Writer ch%d: continue_chapter — no partial draft available", chapter)
+
+                elif action == "accept_rebalance":
+                    # The Evaluator determined the draft is good but the target is wrong.
+                    # Accept the current output and redistribute the word budget.
+                    from .word_count import strip_artifacts as _sa_reb
+                    # Get the most recent output
+                    last_clean_reb = ""
+                    draft_path_reb = os.path.join(project, cfg.unit_dir)
+                    if os.path.isdir(draft_path_reb):
+                        import glob as _glob_reb
+                        drafts_reb = sorted(_glob_reb.glob(os.path.join(draft_path_reb, f"{chapter:03d}_*.md")))
+                        if drafts_reb:
+                            with open(drafts_reb[-1], "r", encoding="utf-8") as f:
+                                last_clean_reb = _sa_reb(f.read())
+
+                    last_wc = len(last_clean_reb.split())
+                    if last_wc >= MIN_PROSE_WORDS:
+                        body = last_clean_reb.strip() + "\n"
+                        rel = _write_file(_unit_rel(chapter, state), project, body)
+                        from .word_count import count_words
+                        wc = count_words(os.path.join(project, rel))
+
+                        # Update the budget ledger
+                        delta = wc - target
+                        if delta < 0:
+                            downstream = [ch for ch in state.units if ch > chapter]
+                            if downstream:
+                                per_chapter_add = abs(delta) // len(downstream)
+                                for dc in downstream:
+                                    dc_alloc = state.node_allocations.setdefault(dc, {})
+                                    dc_alloc["target"] = dc_alloc.get("target", target) + per_chapter_add
+                                    dc_alloc["max"] = dc_alloc.get("max", target) + per_chapter_add
+                                state.budget_ledger.setdefault("accepted_deltas", []).append({
+                                    "node_id": chapter, "delta": delta,
+                                    "reassigned_to": {dc: per_chapter_add for dc in downstream},
+                                })
+                            log.info("Writer ch%d: accept_rebalance — accepted %d words (target was %d), "
+                                     "deficit=%d redistributed to %d downstream chapters",
+                                     chapter, wc, target, abs(delta), len(downstream) if downstream else 0)
+                        else:
+                            log.info("Writer ch%d: accept_rebalance — accepted %d words (target was %d)",
+                                     chapter, wc, target)
+
+                        return {"artifact": rel, "chapter": chapter, "word_count": wc,
+                                "raw_preview": body[:400]}
+                    else:
+                        log.warning("Writer ch%d: accept_rebalance — draft too short (%d < %d)",
+                                    chapter, last_wc, MIN_PROSE_WORDS)
 
                 elif action == "halt_human":
                     raise BadProseError(
@@ -1978,7 +2108,8 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
               word_count_min: int = 0, word_count_max: int = 0,
               units: Optional[list[int]] = None, instructions: str = "",
               rerun_mode: str = "fresh", max_chapter_retries: int = 2,
-              format: str = "novel", max_editorial_lock_retries: int = 2) -> RunState:
+              format: str = "novel", max_editorial_lock_retries: int = 2,
+              writer_model: str = "", default_model: str = "") -> RunState:
     """Initialize (or reset) a pipeline run. Returns the fresh RunState.
 
     ``rerun_mode`` controls how existing material is handled:
@@ -2015,6 +2146,8 @@ def start_run(project: str, project_name: str = "", word_floor: int = 800,
         current_unit_index=0,
         max_chapter_retries=max_chapter_retries,
         max_editorial_lock_retries=max_editorial_lock_retries,
+        writer_model=writer_model,
+        default_model=default_model,
     )
     # If a manifest already exists, pre-populate the unit list from it.
     manifest_path = os.path.join(project, "state", "completion_manifest.json")

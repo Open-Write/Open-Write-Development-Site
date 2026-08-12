@@ -524,6 +524,8 @@ async def start_run(project_id: str, req: StartRunRequest,
         (project_id, current["id"]),
     )
     project_format = (proj_row or {}).get("format", "novel")
+    writer_model = settings_store.get_writer_model()
+    default_model = settings_store.get_default_model()
     state = orchestrator.start_run(project, name, req.word_floor,
                                    word_count_min=req.word_count_min,
                                    word_count_max=req.word_count_max,
@@ -531,7 +533,9 @@ async def start_run(project_id: str, req: StartRunRequest,
                                    rerun_mode=req.rerun_mode,
                                    max_chapter_retries=req.max_chapter_retries,
                                    max_editorial_lock_retries=req.max_editorial_lock_retries,
-                                   format=project_format)
+                                   format=project_format,
+                                   writer_model=writer_model,
+                                   default_model=default_model)
     return {
         "status": state.status,
         "current_phase": state.current_phase,
