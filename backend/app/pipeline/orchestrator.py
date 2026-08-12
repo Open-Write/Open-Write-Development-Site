@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -37,6 +38,8 @@ from typing import Awaitable, Callable, Optional
 from . import build_manifest, verify_completion, finalize as finalize_mod
 from .word_count import strip_artifacts
 from . import profile_context
+
+log = logging.getLogger(__name__)
 
 # ── Path to the frozen Open-Write reference (read-only) ───────────────────────
 # Resolved lazily so importing this module never depends on the reference tree.
@@ -1443,11 +1446,17 @@ async def _invoke_evaluator(
         "No preamble, no markdown fences. Only the JSON."
     )
 
+    log.info("Evaluator ch%d: calling model (evidence_packet=%d chars, prompt=%d chars)",
+             chapter, len(evidence_packet), len(evaluator_user))
+
     try:
         reply = await model_call(evaluator_system, evaluator_user)
     except Exception as exc:
-        log.warning("Evaluator call failed: %s", exc)
+        log.warning("Evaluator ch%d: model call failed: %s", chapter, exc)
         return None
+
+    log.info("Evaluator ch%d: got reply (%d chars): %s",
+             chapter, len(reply), reply[:300])
 
     # Parse the Evaluator's JSON output
     import json as _json
@@ -1458,8 +1467,8 @@ async def _invoke_evaluator(
 
     try:
         verdict = _json.loads(json_str)
-    except _json.JSONDecodeError:
-        log.warning("Evaluator returned invalid JSON: %s", reply[:200])
+    except _json.JSONDecodeError as exc:
+        log.warning("Evaluator ch%d: invalid JSON (%s): %s", chapter, exc, reply[:300])
         return None
 
     # Validate the verdict
@@ -1544,19 +1553,31 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
     attempt_classifications: list[dict] = []  # Classification per attempt
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        log.info("Writer ch%d attempt %d/%d (proper_failures=%d)",
+                 chapter, attempt, MAX_ATTEMPTS,
+                 state.proper_failure_count.get(chapter, 0))
+
         # After PAUSE_AFTER failures, invoke the Evaluator instead of sleeping.
         # The Evaluator diagnoses root cause and issues a structured verdict that
         # routes work back to the correct station with a patch attached.
         if attempt == PAUSE_AFTER + 1:
+            log.info("Writer ch%d: invoking Evaluator at scope 1 after %d failures",
+                     chapter, PAUSE_AFTER)
             evaluator_result = await _invoke_evaluator(
                 state, project, chapter, model_call,
                 attempt_metrics, attempt_classifications, scope=1,
             )
             if evaluator_result:
-                # Evaluator issued a verdict — apply the patch and retry
                 action = evaluator_result.get("action", "")
                 patch = evaluator_result.get("patch", {})
                 patch_content = patch.get("content", "")
+                diagnosis = evaluator_result.get("diagnosis", {})
+                log.info("Writer ch%d: Evaluator verdict — action=%s, root_cause=%s, "
+                         "confidence=%.2f, patch_len=%d",
+                         chapter, action,
+                         diagnosis.get("root_cause", "?"),
+                         diagnosis.get("confidence", 0),
+                         len(patch_content))
 
                 if action == "retry_writer_expand" and patch_content:
                     # Append the Evaluator's directive to the retry note
@@ -1635,6 +1656,13 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
                     )
 
             # If Evaluator didn't produce a useful verdict, do the stock pause
+            if evaluator_result is None:
+                log.warning("Writer ch%d: Evaluator returned None — falling back to %ds pause",
+                            chapter, PAUSE_SECONDS)
+            else:
+                log.warning("Writer ch%d: Evaluator verdict not actionable (action=%s) — "
+                            "falling back to %ds pause",
+                            chapter, evaluator_result.get("action", "?"), PAUSE_SECONDS)
             await asyncio.sleep(PAUSE_SECONDS)
 
         # Inject retry context on 2nd+ attempt
