@@ -36,10 +36,30 @@ log = logging.getLogger(__name__)
 # DeepSeek pricing per million tokens (verify against
 # https://api-docs.deepseek.com/quick_start/pricing).
 # Cache hit input is ~1/50th of cache miss input.
-_DEEPSEEK_PRICING = {
+_MODEL_PRICING = {
+    # DeepSeek (direct API)
     "deepseek-v4-flash": {"cache_hit": 0.0028, "cache_miss": 0.14, "output": 0.28},
     "deepseek-v4-pro":   {"cache_hit": 0.007,  "cache_miss": 0.35, "output": 0.70},
+    # Xiaomi MiMo (overseas pricing, USD per 1M tokens)
+    "mimo-v2.5-pro":     {"cache_hit": 0.0036, "cache_miss": 0.435, "output": 0.87},
+    "mimo-v2.5":         {"cache_hit": 0.0028, "cache_miss": 0.14,  "output": 0.28},
 }
+
+# MiMo server-side SWA cache achieves ~93% hit rate per their documentation.
+# When the API doesn't report cache_hit/cache_miss (MiMo returns only
+# prompt_tokens), estimate the split using this rate for cost tracking.
+_MIMO_CACHE_HIT_RATE = 0.93
+
+# Model output capacity estimates (completion tokens per call).
+# Used to adapt word count floors so the pipeline doesn't expect more output
+# than the model can produce in a single call.
+_MODEL_MAX_COMPLETION = {
+    "mimo-v2.5-pro": 5500,
+    "mimo-v2.5":     5500,
+    "deepseek-v4-flash": 8000,
+    "deepseek-v4-pro":   8000,
+}
+_DEFAULT_MAX_COMPLETION = 8000
 
 # Accumulated cache metrics per step (for the summary report).
 # Key: (pipeline_step_name, model). Value: list of dicts.
@@ -54,16 +74,34 @@ def get_cache_metrics() -> list[dict]:
     return out
 
 
-def _estimate_cost(model: str, cache_hit: int, cache_miss: int, completion: int) -> float:
-    """Estimate cost in USD for a DeepSeek API call."""
-    pricing = _DEEPSEEK_PRICING.get(model)
+def _estimate_cost(model: str, cache_hit: int, cache_miss: int, completion: int,
+                   prompt_tokens: int = 0) -> float:
+    """Estimate cost in USD for an API call.
+
+    For DeepSeek, cache_hit/cache_miss are reported directly by the API.
+    For MiMo, the API reports only prompt_tokens (server-side SWA cache is
+    transparent). When cache_hit and cache_miss are both 0 but prompt_tokens > 0,
+    estimate the split using the documented 93% average hit rate.
+    """
+    pricing = _MODEL_PRICING.get(model)
     if not pricing:
         return 0.0
+
+    # MiMo doesn't report cache_hit/cache_miss — estimate from prompt_tokens.
+    if cache_hit == 0 and cache_miss == 0 and prompt_tokens > 0:
+        cache_hit = int(prompt_tokens * _MIMO_CACHE_HIT_RATE)
+        cache_miss = prompt_tokens - cache_hit
+
     return (
         cache_hit / 1e6 * pricing["cache_hit"]
         + cache_miss / 1e6 * pricing["cache_miss"]
         + completion / 1e6 * pricing["output"]
     )
+
+
+def get_model_max_completion(model: str) -> int:
+    """Return the approximate max completion tokens for a model."""
+    return _MODEL_MAX_COMPLETION.get(model, _DEFAULT_MAX_COMPLETION)
 
 
 async def list_models(api_key: str, base_url: str = OPENROUTER_BASE) -> list[dict]:
@@ -401,7 +439,7 @@ async def run_chat(
         prompt_tok = (usage_data or {}).get("prompt_tokens", 0)
         comp_tok   = (usage_data or {}).get("completion_tokens", 0)
         hit_rate   = (cache_hit / prompt_tok * 100) if prompt_tok else 0.0
-        cost       = _estimate_cost(model_id, cache_hit, cache_miss, comp_tok)
+        cost       = _estimate_cost(model_id, cache_hit, cache_miss, comp_tok, prompt_tok)
 
         log.info(
             "run_chat model=%s step=%s prompt_chars=%d turns=%d elapsed=%.2fs status=%s "

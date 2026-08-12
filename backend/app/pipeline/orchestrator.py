@@ -1695,11 +1695,54 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
 
         last_failure_reason = reason
 
-        # Step 1: Classify the failure
+        # Continuation pass: if the model produced substantial output but hit
+        # its output limit, try continuing from where it left off.  This is
+        # cheaper than the Evaluator and works well for models with lower
+        # per-call output capacity (e.g. MiMo-V2.5-Pro at ~5000 tokens).
         from .evaluator.classifier import classify, FailureClass
         from .word_count import strip_artifacts as _sa
         clean = _sa(reply)
         clean_wc = len(clean.split())
+
+        CONTINUATION_THRESHOLD = 2000  # minimum words for continuation to be worth trying
+        if clean_wc >= CONTINUATION_THRESHOLD and clean_wc < chapter_floor:
+            log.info("Writer ch%d: output %d words below floor %d but above threshold — "
+                     "trying continuation pass", chapter, clean_wc, chapter_floor)
+            continuation_prompt = (
+                f"{prefix}\n\n"
+                f"--- STEP: CONTINUE {cfg.unit_label.upper()} {chapter} ---\n"
+                f"{step_instruction}"
+                f"The chapter is incomplete. Here is what has been written so far:\n\n"
+                f"--- PARTIAL {cfg.unit_label.upper()} ---\n{clean}\n--- END PARTIAL ---\n\n"
+                f"Continue the narrative seamlessly from where it left off. "
+                f"Do NOT repeat any content. Do NOT start a new chapter. "
+                f"Continue the existing scene. "
+                f"Target: add ~{chapter_floor - clean_wc} more words to reach "
+                f"~{chapter_floor} words total for this {cfg.unit_label}."
+                f"{rewrite_note}",
+            )
+            continuation_user = _with_instructions(continuation_prompt, state)
+            cont_reply = await model_call(_GLOBAL_SYSTEM_PROMPT, continuation_user)
+            cont_clean = _sa(cont_reply)
+            cont_wc = len(cont_clean.split())
+            combined_wc = clean_wc + cont_wc
+
+            log.info("Writer ch%d: continuation pass produced %d words, combined=%d, floor=%d",
+                     chapter, cont_wc, combined_wc, chapter_floor)
+
+            if combined_wc >= max(MIN_PROSE_WORDS, chapter_floor):
+                # Combine the two halves and accept.
+                body = clean.strip() + "\n\n" + cont_clean.strip() + "\n"
+                rel = _write_file(_unit_rel(chapter, state), project, body)
+                from .word_count import count_words
+                wc = count_words(os.path.join(project, rel))
+                return {"artifact": rel, "chapter": chapter, "word_count": wc,
+                        "raw_preview": (reply[:200] + "..." + cont_reply[:200])}
+            else:
+                log.info("Writer ch%d: continuation pass still short (%d < %d), continuing retries",
+                         chapter, combined_wc, chapter_floor)
+
+        # Step 1: Classify the failure
         classification = classify(
             output=reply, word_count=clean_wc,
             word_target=state.per_chapter_target or 5000,
