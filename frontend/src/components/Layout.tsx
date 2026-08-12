@@ -45,6 +45,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             )}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
+            <a href="/" className="btn-ghost !py-1.5 text-gray-400 hover:text-gray-200" title="Exit to Open-Write Studio home page">
+              Exit
+            </a>
             <span className="text-gray-500">{user?.email}</span>
             <button className="btn-ghost !py-1.5" onClick={logout}>Log out</button>
           </div>
