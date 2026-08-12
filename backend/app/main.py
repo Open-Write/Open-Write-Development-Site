@@ -13,6 +13,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+# Configure logging so application log.info() calls are visible in Railway logs.
+# Uvicorn configures its own access logger but leaves the root logger at WARNING,
+# which silently drops all INFO-level messages from application modules.
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+
 # Resolve paths relative to the repo root (two levels up from this file).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
