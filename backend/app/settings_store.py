@@ -24,10 +24,29 @@ import os
 
 from app import db
 
-# Server-side DeepSeek API key — injected into all users' providers so they
-# can use the service without providing their own key. Set via the
-# DEEPSEEK_API_KEY environment variable on Railway.
+# Server-side API keys — injected into all users' providers so they
+# can use the service without providing their own key. Set via
+# environment variables on Railway.
 _DEEPSEEK_SERVER_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+_MIMO_SERVER_KEY = os.environ.get("MIMO_API_KEY", "")
+
+# Account tier → allowed model prefixes. Basic tier gets the two cheapest
+# models; pro/admin get everything.
+TIER_MODEL_ALLOWLIST = {
+    "basic": [
+        "deepseek/deepseek-v4-flash",
+        "mimo/mimo-v2.5",
+    ],
+    "pro": None,  # None = all models allowed
+    "admin": None,
+}
+
+# Monthly token allowance per tier (input + output tokens combined).
+TIER_MONTHLY_TOKENS = {
+    "basic": 500_000,
+    "pro": 2_000_000,
+    "admin": 10_000_000,
+}
 
 # Per-request holder of the current user's raw settings dict (or None).
 _current_settings: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
@@ -177,11 +196,15 @@ def get_providers() -> list[dict]:
         for p in providers:
             if p["id"] == "openrouter" and not p.get("api_key"):
                 p["api_key"] = legacy_key
-    # Inject server-side DeepSeek key if the user hasn't set their own.
+    # Inject server-side keys if the user hasn't set their own.
     if _DEEPSEEK_SERVER_KEY:
         for p in providers:
             if p["id"] == "deepseek" and not p.get("api_key"):
                 p["api_key"] = _DEEPSEEK_SERVER_KEY
+    if _MIMO_SERVER_KEY:
+        for p in providers:
+            if p["id"] == "mimo" and not p.get("api_key"):
+                p["api_key"] = _MIMO_SERVER_KEY
     return providers
 
 
@@ -237,3 +260,83 @@ def get_rollover_hour() -> int:
 
 def get_vault_root() -> str:
     return load_settings().get("vault_root", DEFAULT_SETTINGS["vault_root"])
+
+
+# ── Account tier and token tracking ──────────────────────────────────────────
+
+def get_user_tier(user_id: str) -> str:
+    """Return the user's account tier (basic, pro, admin)."""
+    row = db.query_one("SELECT account_tier FROM users WHERE id = %s", (user_id,))
+    if row and row.get("account_tier"):
+        return row["account_tier"]
+    return "basic"
+
+
+def get_allowed_models(user_id: str) -> list[str] | None:
+    """Return the list of allowed model IDs for the user's tier.
+
+    Returns None if all models are allowed (pro/admin).
+    """
+    tier = get_user_tier(user_id)
+    return TIER_MODEL_ALLOWLIST.get(tier)
+
+
+def get_monthly_token_allowance(user_id: str) -> int:
+    """Return the monthly token allowance for the user's tier."""
+    tier = get_user_tier(user_id)
+    return TIER_MONTHLY_TOKENS.get(tier, TIER_MONTHLY_TOKENS["basic"])
+
+
+def get_token_usage(user_id: str) -> dict:
+    """Return the user's token usage for the current billing period.
+
+    Returns {tokens_used, tokens_remaining, monthly_allowance, reset_date, tier}.
+    """
+    tier = get_user_tier(user_id)
+    allowance = TIER_MONTHLY_TOKENS.get(tier, TIER_MONTHLY_TOKENS["basic"])
+
+    # Get usage from the token_usage table for the current month.
+    row = db.query_one(
+        "SELECT COALESCE(SUM(tokens_used), 0) as total "
+        "FROM token_usage WHERE user_id = %s AND period_start <= NOW() "
+        "AND period_end > NOW()",
+        (user_id,),
+    )
+    used = int(row["total"]) if row else 0
+
+    # Get the reset date (end of current billing period).
+    reset_row = db.query_one(
+        "SELECT period_end FROM token_usage WHERE user_id = %s "
+        "AND period_start <= NOW() AND period_end > NOW() "
+        "ORDER BY period_end LIMIT 1",
+        (user_id,),
+    )
+    reset_date = reset_row["period_end"].isoformat() if reset_row and reset_row.get("period_end") else None
+
+    return {
+        "tokens_used": used,
+        "tokens_remaining": max(0, allowance - used),
+        "monthly_allowance": allowance,
+        "reset_date": reset_date,
+        "tier": tier,
+    }
+
+
+def record_token_usage(user_id: str, tokens: int) -> None:
+    """Record token usage for the current billing period.
+
+    Creates a new period row if one doesn't exist (30-day rolling window).
+    """
+    # Ensure a current period exists.
+    db.execute(
+        "INSERT INTO token_usage (user_id, tokens_used, period_start, period_end) "
+        "VALUES (%s, 0, NOW(), NOW() + INTERVAL '30 days') "
+        "ON CONFLICT DO NOTHING",
+        (user_id,),
+    )
+    # Increment usage.
+    db.execute(
+        "UPDATE token_usage SET tokens_used = tokens_used + %s "
+        "WHERE user_id = %s AND period_start <= NOW() AND period_end > NOW()",
+        (tokens, user_id),
+    )

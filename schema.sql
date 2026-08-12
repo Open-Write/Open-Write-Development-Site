@@ -11,8 +11,31 @@ CREATE TABLE IF NOT EXISTS users (
     email         TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     is_admin      BOOLEAN NOT NULL DEFAULT FALSE,
+    account_tier  TEXT NOT NULL DEFAULT 'basic',
     created_at    TIMESTAMPTZ DEFAULT now()
 );
+
+-- Add account_tier to existing users tables (idempotent).
+DO $$ BEGIN
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS account_tier TEXT NOT NULL DEFAULT 'basic';
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- ── Token Usage Tracking ─────────────────────────────────────────────────────
+-- Tracks per-user token consumption in 30-day rolling billing periods.
+-- The settings_store.record_token_usage() function creates period rows and
+-- increments usage.  get_token_usage() reads the current period.
+CREATE TABLE IF NOT EXISTS token_usage (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+    tokens_used   INTEGER NOT NULL DEFAULT 0,
+    period_start  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    period_end    TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '30 days',
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_user_period
+    ON token_usage (user_id, period_start, period_end);
 
 -- ── Projects ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS projects (
@@ -21,6 +44,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name        TEXT NOT NULL,
     description TEXT,
     format      TEXT DEFAULT 'novel',
+    source_path TEXT,
     created_at  TIMESTAMPTZ DEFAULT now(),
     updated_at  TIMESTAMPTZ DEFAULT now()
 );

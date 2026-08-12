@@ -67,6 +67,7 @@ async function request<T>(
 export interface User { id: string; email: string; is_admin?: boolean; }
 export interface Project {
   id: string; name: string; description: string; format: string;
+  source_path?: string | null;
   created_at: string | null; updated_at: string | null;
 }
 export interface Provider {
@@ -103,6 +104,16 @@ export interface Chapter {
   word_count: number; title: string;
 }
 
+// ── File browser types ──────────────────────────────────────────────────
+export interface FileNode {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  kind?: "text" | "image" | "binary";
+  size?: number;
+  children?: FileNode[];
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────────
 export const api = {
   signup: (email: string, password: string) =>
@@ -119,6 +130,9 @@ export const api = {
   listProjects: () => request<Project[]>("/projects"),
   createProject: (name: string, description: string, format: string) =>
     request<Project>("/projects", { method: "POST", body: { name, description, format } }),
+  importProject: (name: string, source_path: string, description: string, format: string) =>
+    request<Project & { recognized_dirs?: string[]; file_count?: number }>(
+      "/projects/import", { method: "POST", body: { name, source_path, description, format } }),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   updateProject: (id: string, body: { name?: string; description?: string }) =>
     request<Project>(`/projects/${id}`, { method: "PUT", body }),
@@ -135,6 +149,12 @@ export const api = {
   listProviderModels: (provider_id: string) =>
     request<{ models: { id: string; name: string }[]; source: string }>(
       `/settings/models/${provider_id}`),
+  getTokenUsage: () =>
+    request<{ tokens_used: number; tokens_remaining: number; monthly_allowance: number; reset_date: string | null; tier: string; allowed_models: string[] | null }>(
+      "/settings/token-usage"),
+  getAccountTier: () =>
+    request<{ tier: string; allowed_models: string[] | null; monthly_tokens: number }>(
+      "/settings/account-tier"),
 
   // Pipeline
   runState: (pid: string) => request<RunState>(`/pipeline/${pid}/run-state`),
@@ -368,6 +388,25 @@ export const api = {
   decomposeAndRun: (reviewId: string, body: { description: string; genre?: string; audience?: string; draft_stage?: string; rubric?: Record<string, unknown> | null; include_amplification?: boolean }) =>
     request<{ decomposition_name: string; decomposition_rationale: string; readers: { persona_id: string; name: string; output: string }[]; synthesis: { output: string; name: string } | null; amplification: { output: string; name: string } | null; model_used: string }>(
       `/editorial/reviews/${reviewId}/decompose-and-run`, { method: "POST", body }),
+
+  // ── File browser (Studio editor) ───────────────────────────────────────
+  fileTree: (pid: string) =>
+    request<{ root: string; tree: FileNode[] }>(`/files/${pid}/tree`),
+  readFile: (pid: string, path: string) =>
+    request<{ path: string; content: string | null; kind: string; size: number; word_count?: number }>(
+      `/files/${pid}/read?path=${encodeURIComponent(path)}`),
+  saveFile: (pid: string, body: { path: string; content: string }) =>
+    request<{ saved: boolean; path: string; size: number; word_count: number }>(
+      `/files/${pid}/save`, { method: "POST", body }),
+  createFileItem: (pid: string, body: { path: string; is_directory?: boolean; content?: string }) =>
+    request<{ created: boolean; path: string; is_directory: boolean }>(
+      `/files/${pid}/create`, { method: "POST", body }),
+  deleteFileItem: (pid: string, path: string) =>
+    request<{ deleted: boolean; path: string }>(
+      `/files/${pid}/delete?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
+  renameFileItem: (pid: string, body: { old_path: string; new_path: string }) =>
+    request<{ renamed: boolean; old_path: string; new_path: string }>(
+      `/files/${pid}/rename`, { method: "POST", body }),
 
   // Admin
   listApprovedEmails: () =>

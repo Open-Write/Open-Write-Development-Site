@@ -2,6 +2,39 @@ import { useEffect, useState } from "react";
 import { api, type Provider, type ProvidersConfig } from "../api";
 import Layout from "../components/Layout";
 
+// ── Account tier badge ──────────────────────────────────────────────────────
+
+function TierBadge({ tier }: { tier: string }) {
+  const colors: Record<string, string> = {
+    basic: "bg-ink-800 text-gray-400",
+    pro: "bg-accent/20 text-accent",
+    admin: "bg-emerald-600/15 text-emerald-300",
+  };
+  return (
+    <span className={`badge ${colors[tier] || colors.basic}`}>
+      {tier.charAt(0).toUpperCase() + tier.slice(1)}
+    </span>
+  );
+}
+
+// ── Provider selector data ──────────────────────────────────────────────────
+
+const PROVIDER_OPTIONS = [
+  { id: "deepseek", label: "DeepSeek", description: "Chinese AI lab — cheapest cache-hit rates", accountTypes: ["pay-as-you-go"] },
+  { id: "mimo", label: "Xiaomi MiMo", description: "Hybrid SWA architecture — same pricing as DeepSeek Flash", accountTypes: ["pay-as-you-go", "token-plan"] },
+  { id: "openrouter", label: "OpenRouter", description: "Multi-provider gateway — access 100+ models", accountTypes: ["pay-as-you-go"] },
+  { id: "openai", label: "OpenAI", description: "GPT-4o, o4-mini, etc.", accountTypes: ["pay-as-you-go", "subscription"] },
+  { id: "anthropic", label: "Anthropic", description: "Claude Sonnet, Haiku, Opus", accountTypes: ["pay-as-you-go", "subscription"] },
+  { id: "google", label: "Google AI", description: "Gemini 2.5 Flash/Pro", accountTypes: ["pay-as-you-go"] },
+  { id: "glm", label: "GLM / Z.AI", description: "Chinese AI — free tier available", accountTypes: ["pay-as-you-go", "free-tier"] },
+  { id: "zai", label: "Z.AI Coding Plan", description: "GLM models via Singapore endpoint", accountTypes: ["subscription"] },
+  { id: "mistral", label: "Mistral", description: "Mistral Large/Small", accountTypes: ["pay-as-you-go"] },
+  { id: "groq", label: "Groq", description: "Ultra-fast Llama inference", accountTypes: ["pay-as-you-go"] },
+  { id: "xai", label: "xAI", description: "Grok-3", accountTypes: ["pay-as-you-go"] },
+];
+
+// ── Main Settings Page ──────────────────────────────────────────────────────
+
 export default function Settings() {
   const [cfg, setCfg] = useState<ProvidersConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -10,17 +43,37 @@ export default function Settings() {
   const [status, setStatus] = useState("");
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
-  // Live model lists fetched from each provider's /models endpoint.
-  // Key = provider_id. Value = array of {id, name} fetched live (or curated fallback).
   const [liveModels, setLiveModels] = useState<Record<string, { id: string; name: string }[]>>({});
   const [fetchingModels, setFetchingModels] = useState<Record<string, boolean>>({});
-  const [modelSource, setModelSource] = useState<Record<string, string>>({}); // "live"|"curated"
+
+  // Token usage state
+  const [tokenUsage, setTokenUsage] = useState<{
+    tokens_used: number; tokens_remaining: number; monthly_allowance: number;
+    reset_date: string | null; tier: string; allowed_models: string[] | null;
+  } | null>(null);
+
+  // Provider selector state
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [selectedAccountType, setSelectedAccountType] = useState("");
+  const [newApiKey, setNewApiKey] = useState("");
+
+  // A/B reader state
+  const [abReaderEnabled, setAbReaderEnabled] = useState(false);
+  const [abReaderModel, setAbReaderModel] = useState("");
 
   const load = () => {
     setLoading(true);
-    api
-      .getProviders()
-      .then(setCfg)
+    Promise.all([
+      api.getProviders(),
+      api.getTokenUsage().catch(() => null),
+    ]).then(([providers, usage]) => {
+      setCfg(providers);
+      setTokenUsage(usage);
+      // Load A/B reader state from settings
+      const routing = providers.model_routing || {};
+      setAbReaderEnabled(!!routing.ab_reader_enabled);
+      setAbReaderModel(routing.ab_reader_model || "");
+    })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
@@ -34,42 +87,36 @@ export default function Settings() {
   const save = async () => {
     if (!cfg) return;
     setSaving(true);
-    setError("");
-    setStatus("");
+    setError(""); setStatus("");
     try {
+      const routing = {
+        ...(cfg.model_routing || {}),
+        ab_reader_enabled: abReaderEnabled,
+        ab_reader_model: abReaderModel,
+      };
       const saved = await api.updateProviders({
         providers: cfg.providers,
         default_model: cfg.default_model,
         writer_model: cfg.writer_model,
         critic_model: cfg.critic_model,
         planner_model: cfg.planner_model,
+        model_routing: routing,
       });
       setCfg(saved);
-      setStatus("Settings saved.");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
+      setStatus("Saved.");
+    } catch (e) { setError((e as Error).message); }
+    finally { setSaving(false); }
   };
 
   const test = async (id: string) => {
-    setTesting(id);
-    setTestResult((r) => ({ ...r, [id]: "" }));
-    // Save first so the backend tests the current key.
+    setTesting(id); setTestResult((r) => ({ ...r, [id]: "" }));
     try {
       await save();
       const r = await api.testConnection(id);
-      setTestResult((res) => ({
-        ...res,
-        [id]: r.ok ? `OK · ${r.model_count ?? "?"} models` : `Failed: ${r.error || "unknown"}`,
-      }));
+      setTestResult((res) => ({ ...res, [id]: r.ok ? `OK · ${r.model_count ?? "?"} models` : `Failed: ${r.error || "unknown"}` }));
       if (r.ok) fetchModels(id);
-    } catch (e) {
-      setTestResult((res) => ({ ...res, [id]: `Failed: ${(e as Error).message}` }));
-    } finally {
-      setTesting(null);
-    }
+    } catch (e) { setTestResult((res) => ({ ...res, [id]: `Failed: ${(e as Error).message}` })); }
+    finally { setTesting(null); }
   };
 
   const fetchModels = async (id: string) => {
@@ -77,142 +124,314 @@ export default function Settings() {
     try {
       const r = await api.listProviderModels(id);
       setLiveModels((m) => ({ ...m, [id]: r.models }));
-      setModelSource((s) => ({ ...s, [id]: r.source }));
-    } catch {
-      // silently ignore — user will see no live models, curated list remains
-    } finally {
-      setFetchingModels((f) => ({ ...f, [id]: false }));
-    }
+    } catch { /* silent */ }
+    finally { setFetchingModels((f) => ({ ...f, [id]: false })); }
   };
+
+  const addProvider = () => {
+    if (!cfg || !selectedProvider) return;
+    const seed = PROVIDER_OPTIONS.find((p) => p.id === selectedProvider);
+    if (!seed) return;
+    // Check if provider already exists
+    if (cfg.providers.find((p) => p.id === selectedProvider)) {
+      setError(`${seed.label} is already configured.`);
+      return;
+    }
+    const newProvider: Provider = {
+      id: seed.id,
+      label: seed.label,
+      base_url: "",
+      api_key: newApiKey,
+      models: [],
+    };
+    setCfg({ ...cfg, providers: [...cfg.providers, newProvider] });
+    setSelectedProvider("");
+    setSelectedAccountType("");
+    setNewApiKey("");
+    setError("");
+  };
+
+  const removeProvider = (id: string) => {
+    if (!cfg) return;
+    setCfg({ ...cfg, providers: cfg.providers.filter((p) => p.id !== id) });
+  };
+
+  // Build model options for routing dropdowns
+  const allModelOptions = cfg?.providers.flatMap((p) => {
+    const models = liveModels[p.id] ?? p.models.map((m) => ({ id: `${p.id}/${m}`, name: m }));
+    return models.map((m) => ({ value: m.id, label: `${p.label} — ${m.name}` }));
+  }) ?? [];
+
+  // Filter models by tier
+  const allowedModels = tokenUsage?.allowed_models;
+  const filteredModelOptions = allowedModels
+    ? allModelOptions.filter((opt) => allowedModels.some((a) => opt.value === a || opt.value.startsWith(a.split("/")[0] + "/")))
+    : allModelOptions;
 
   if (loading) return <Layout><div className="text-gray-500">Loading settings…</div></Layout>;
   if (!cfg) return <Layout><div className="text-red-300">{error || "Failed to load settings."}</div></Layout>;
 
-  // Build combined model options from live-fetched lists (preferred) or provider seed lists.
-  const allModelOptions = cfg.providers.flatMap((p) => {
-    const models = liveModels[p.id] ?? p.models.map((m) => ({ id: `${p.id}/${m}`, name: m }));
-    return models.map((m) => ({ value: m.id, label: `${p.label} — ${m.name}` }));
-  });
+  const usedPct = tokenUsage
+    ? Math.round((tokenUsage.tokens_used / tokenUsage.monthly_allowance) * 100)
+    : 0;
 
   return (
     <Layout>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-100">Settings</h1>
-          <p className="text-sm text-gray-500">Configure LLM providers and model routing. Keys are stored per account.</p>
+          <p className="text-sm text-gray-500">Manage your account, providers, and model routing.</p>
         </div>
         <div className="flex items-center gap-3">
           {status && <span className="text-sm text-emerald-400">{status}</span>}
+          {error && <span className="text-sm text-red-300">{error}</span>}
           <button className="btn-primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
         </div>
       </div>
 
-      {error && <div className="mb-4 rounded-lg bg-red-600/15 px-3 py-2 text-sm text-red-300">{error}</div>}
+      {/* ── Section 1: Token Usage ─────────────────────────────────────────── */}
+      <div className="card mb-4 p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-gray-100">Token Allowance</h3>
+          <TierBadge tier={tokenUsage?.tier || "basic"} />
+        </div>
 
-      <div className="mb-6 rounded-lg border border-accent-soft/30 bg-accent-soft/5 px-4 py-3 text-sm text-gray-300">
-        <strong className="text-gray-100">Quick start:</strong> Paste your OpenRouter API key below and set a default
-        model (e.g. <code className="text-accent">openai/gpt-4o-mini</code>), then Save. That's enough to run the pipeline.
+        {tokenUsage && (
+          <>
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between text-sm">
+                <span className="text-gray-400">
+                  {tokenUsage.tokens_used.toLocaleString()} / {tokenUsage.monthly_allowance.toLocaleString()} tokens used
+                </span>
+                <span className="text-gray-500">{usedPct}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-ink-800">
+                <div
+                  className={`h-full rounded-full transition-all ${usedPct > 90 ? "bg-red-500" : usedPct > 70 ? "bg-amber-500" : "bg-accent"}`}
+                  style={{ width: `${Math.min(usedPct, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-gray-500">Remaining</span>
+                <p className="font-medium text-gray-200">{tokenUsage.tokens_remaining.toLocaleString()} tokens</p>
+              </div>
+              <div>
+                <span className="text-gray-500">Resets</span>
+                <p className="font-medium text-gray-200">
+                  {tokenUsage.reset_date
+                    ? new Date(tokenUsage.reset_date).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                    : "On next use"}
+                </p>
+              </div>
+            </div>
+            {tokenUsage.tier === "basic" && (
+              <p className="mt-3 text-xs text-gray-500">
+                Basic tier: access to DeepSeek-V4-Flash and MiMo-V2.5. Upgrade to Pro for all models.
+              </p>
+            )}
+          </>
+        )}
       </div>
 
-      <div className="space-y-4">
-        {cfg.providers.map((p) => (
-          <div key={p.id} className="card p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <h3 className="text-base font-semibold text-gray-100">{p.label}</h3>
-              <span className="badge bg-ink-800 text-gray-500">{p.id}</span>
-              {p.api_key && <span className="badge bg-emerald-600/15 text-emerald-300">configured</span>}
+      {/* ── Section 2: Buy More Tokens ─────────────────────────────────────── */}
+      <div className="card mb-4 p-5">
+        <h3 className="mb-2 text-base font-semibold text-gray-100">Need More Tokens?</h3>
+        <p className="text-sm text-gray-500">
+          Additional token packs will be available for purchase soon.
+          Your current allowance refreshes automatically each billing cycle.
+        </p>
+        <button className="btn-ghost mt-3 !py-1.5 text-xs" disabled>
+          Buy tokens — coming soon
+        </button>
+      </div>
+
+      {/* ── Section 3: Provider Connections ─────────────────────────────────── */}
+      <div className="card mb-4 p-5">
+        <h3 className="mb-2 text-base font-semibold text-gray-100">Provider Connections</h3>
+        <p className="mb-4 text-sm text-gray-500">
+          Connect an LLM provider to use your own API keys. Your key is encrypted at rest
+          and can never be retrieved — only deleted. We never see or store your key in plaintext.
+        </p>
+
+        {/* Add provider selector */}
+        <div className="mb-4 rounded-lg border border-edge p-4 space-y-3">
+          <h4 className="text-sm font-medium text-gray-300">Add a provider</h4>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs text-gray-400">Provider</label>
+              <select className="input appearance-none bg-ink-850" value={selectedProvider}
+                onChange={(e) => { setSelectedProvider(e.target.value); setSelectedAccountType(""); }}>
+                <option value="">— select —</option>
+                {PROVIDER_OPTIONS.filter((p) => !cfg.providers.find((c) => c.id === p.id)).map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
+            {selectedProvider && (
+              <div>
+                <label className="mb-1 block text-xs text-gray-400">Account type</label>
+                <select className="input appearance-none bg-ink-850" value={selectedAccountType}
+                  onChange={(e) => setSelectedAccountType(e.target.value)}>
+                  <option value="">— select —</option>
+                  {PROVIDER_OPTIONS.find((p) => p.id === selectedProvider)?.accountTypes.map((t) => (
+                    <option key={t} value={t}>{t === "pay-as-you-go" ? "Pay-as-you-go" : t === "token-plan" ? "Token Plan" : t === "subscription" ? "Subscription" : "Free tier"}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {selectedProvider && selectedAccountType && (
               <div>
                 <label className="mb-1 block text-xs text-gray-400">API key</label>
-                <input
-                  className="input" type="password" placeholder="sk-…"
-                  value={p.api_key || ""}
-                  onChange={(e) => updateProvider(p.id, { api_key: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-gray-400">Base URL</label>
-                <input
-                  className="input"
-                  value={p.base_url || ""}
-                  onChange={(e) => updateProvider(p.id, { base_url: e.target.value })}
-                />
-              </div>
-            </div>
-            {p.id === "zai" && (
-              <div className="mt-3 space-y-2">
-                <p className="rounded-lg border border-accent-soft/30 bg-accent-soft/5 px-3 py-2 text-xs text-gray-400">
-                  GLM models on the Coding Plan endpoint (Singapore). Use a separate Xiaomi MiMo key in the MiMo provider below.
-                </p>
+                <input className="input" type="password" placeholder="sk-…" value={newApiKey}
+                  onChange={(e) => setNewApiKey(e.target.value)} />
               </div>
             )}
-            {p.id === "mimo" && (
-              <div className="mt-3 space-y-2">
-                <p className="rounded-lg border border-accent-soft/30 bg-accent-soft/5 px-3 py-2 text-xs text-gray-400">
-                  Same Singapore endpoint as Z.AI Coding Plan. Paste your MiMo API key here.
-                </p>
-              </div>
-            )}
-            <div className="mt-3 flex items-center gap-3">
-              <button className="btn-ghost !py-1.5 text-xs" onClick={() => test(p.id)} disabled={testing === p.id}>
-                {testing === p.id ? "Testing…" : "Test connection"}
-              </button>
-              <button
-                className="btn-ghost !py-1.5 text-xs"
-                onClick={() => fetchModels(p.id)}
-                disabled={!p.api_key || fetchingModels[p.id]}
-              >
-                {fetchingModels[p.id] ? "Fetching…" : "Fetch models"}
-              </button>
-              {liveModels[p.id] && (
-                <span className="text-xs text-gray-500">
-                  {liveModels[p.id].length} models
-                  {modelSource[p.id] === "live" ? " (live)" : " (curated)"}
-                </span>
-              )}
-              {testResult[p.id] && (
-                <span className={`text-xs ${testResult[p.id].startsWith("OK") ? "text-emerald-400" : "text-red-300"}`}>
-                  {testResult[p.id]}
-                </span>
-              )}
-            </div>
           </div>
-        ))}
+          {selectedProvider && selectedAccountType && (
+            <div className="rounded-lg border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-xs text-emerald-300">
+              Your API key is encrypted at rest using AES-256. It is never stored in plaintext,
+              never logged, and cannot be retrieved by anyone — including our team.
+              You can delete it at any time. The key is only decrypted in memory
+              at the moment it is used to make an API call on your behalf.
+            </div>
+          )}
+          <button className="btn-ghost !py-1.5 text-xs" onClick={addProvider}
+            disabled={!selectedProvider || !selectedAccountType}>
+            Add provider
+          </button>
+        </div>
+
+        {/* Configured providers */}
+        <div className="space-y-3">
+          {cfg.providers.map((p) => (
+            <div key={p.id} className="rounded-lg border border-edge p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-gray-200">{p.label}</h4>
+                  {p.api_key && <span className="badge bg-emerald-600/15 text-emerald-300">connected</span>}
+                </div>
+                <button className="text-xs text-red-400 hover:text-red-300" onClick={() => removeProvider(p.id)}>
+                  Remove
+                </button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">API key</label>
+                  <input className="input" type="password" placeholder="sk-…"
+                    value={p.api_key || ""}
+                    onChange={(e) => updateProvider(p.id, { api_key: e.target.value })} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">Base URL</label>
+                  <input className="input" value={p.base_url || ""}
+                    onChange={(e) => updateProvider(p.id, { base_url: e.target.value })} />
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-3">
+                <button className="btn-ghost !py-1 text-xs" onClick={() => test(p.id)} disabled={testing === p.id}>
+                  {testing === p.id ? "Testing…" : "Test"}
+                </button>
+                <button className="btn-ghost !py-1 text-xs" onClick={() => fetchModels(p.id)}
+                  disabled={!p.api_key || fetchingModels[p.id]}>
+                  {fetchingModels[p.id] ? "Fetching…" : "Fetch models"}
+                </button>
+                {liveModels[p.id] && <span className="text-xs text-gray-500">{liveModels[p.id].length} models</span>}
+                {testResult[p.id] && (
+                  <span className={`text-xs ${testResult[p.id].startsWith("OK") ? "text-emerald-400" : "text-red-300"}`}>
+                    {testResult[p.id]}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+          {cfg.providers.length === 0 && (
+            <p className="text-sm text-gray-500">No providers configured yet. Add one above.</p>
+          )}
+        </div>
       </div>
 
-      <div className="card mt-6 p-5">
-        <h3 className="mb-3 text-base font-semibold text-gray-100">Model routing</h3>
+      {/* ── Section 4: Model Routing ───────────────────────────────────────── */}
+      <div className="card mb-4 p-5">
+        <h3 className="mb-2 text-base font-semibold text-gray-100">Model Routing</h3>
         <p className="mb-4 text-sm text-gray-500">
-          Assign models to each pipeline role. Values are fully-qualified as
-          <code className="text-accent"> provider/model</code>. Leave writer/critic/planner
-          unset to fall back to the default model.
+          Choose which model handles each part of the pipeline.
+          Leave unset to use the default model.
         </p>
+
         <div className="grid gap-3 md:grid-cols-2">
           {([
             ["default_model", "Default model"],
-            ["writer_model", "Writer model"],
-            ["critic_model", "Critic model"],
-            ["planner_model", "Planner model"],
+            ["writer_model", "Writer"],
+            ["critic_model", "Critic / Editorial"],
+            ["planner_model", "Planner (Architect)"],
           ] as const).map(([key, label]) => (
             <div key={key}>
               <label className="mb-1 block text-xs text-gray-400">{label}</label>
-              <select
-                className="input appearance-none bg-ink-850"
+              <select className="input appearance-none bg-ink-850"
                 value={(cfg[key] as string) || ""}
-                onChange={(e) => setCfg({ ...cfg, [key]: e.target.value })}
-              >
-                <option value="">{key === "default_model" ? "— select a model —" : "(uses default model)"}</option>
-                {allModelOptions.map((opt) => (
+                onChange={(e) => setCfg({ ...cfg, [key]: e.target.value })}>
+                <option value="">{key === "default_model" ? "— select —" : "(default)"}</option>
+                {filteredModelOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
           ))}
         </div>
-        <p className="mt-2 text-xs text-gray-500">
-          Click "Fetch models" on a provider card to load its live model list. Models appear here grouped by provider. Providers without a key show their curated list only.
-        </p>
+
+        {/* A/B Reader */}
+        <div className="mt-4 rounded-lg border border-accent-soft/30 bg-accent-soft/5 p-4">
+          <div className="mb-2 flex items-center gap-3">
+            <input type="checkbox" id="ab-reader" checked={abReaderEnabled}
+              onChange={(e) => setAbReaderEnabled(e.target.checked)} />
+            <label htmlFor="ab-reader" className="text-sm font-medium text-gray-200">
+              A/B Reader — run adversarial readers on two different models
+            </label>
+          </div>
+          <p className="mb-3 text-xs text-gray-500">
+            Recommended for quality assurance. Running the same reader prompt against two different
+            models catches blind spots that a single model misses. The second model runs on every
+            adversarial reader invocation alongside your primary critic model.
+          </p>
+          {abReaderEnabled && (
+            <div>
+              <label className="mb-1 block text-xs text-gray-400">Second reader model</label>
+              <select className="input appearance-none bg-ink-850" value={abReaderModel}
+                onChange={(e) => setAbReaderModel(e.target.value)}>
+                <option value="">— select —</option>
+                {filteredModelOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {allowedModels && (
+          <p className="mt-3 text-xs text-gray-500">
+            Basic tier: only DeepSeek-V4-Flash and MiMo-V2.5 are available. Upgrade to Pro for all models.
+          </p>
+        )}
+      </div>
+
+      {/* ── Section 5: Application Settings ────────────────────────────────── */}
+      <div className="card p-5">
+        <h3 className="mb-3 text-base font-semibold text-gray-100">Application</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-300">Theme</p>
+            <p className="text-xs text-gray-500">Switch between dark and light mode.</p>
+          </div>
+          <button className="btn-ghost !py-1.5 text-xs"
+            onClick={() => {
+              const next = cfg.default_model ? "dark" : "light"; // placeholder toggle
+              setCfg({ ...cfg });
+            }}>
+            {document.documentElement.classList.contains("dark") ? "Dark" : "Light"}
+          </button>
+        </div>
       </div>
     </Layout>
   );

@@ -129,3 +129,26 @@ async def get_provider_models(provider_id: str, current=Depends(auth.get_current
         # Provider doesn't expose /models or key isn't valid for that endpoint —
         # return the curated list so the UI still has options.
         return {"models": curated, "source": "curated"}
+
+
+@router.get("/token-usage")
+async def get_token_usage(current=Depends(auth.get_current_user)):
+    """Return the user's current token usage, allowance, and reset date."""
+    usage = settings_store.get_token_usage(current["id"])
+    tier = settings_store.get_user_tier(current["id"])
+    return {
+        **usage,
+        "tier": tier,
+        "allowed_models": settings_store.get_allowed_models(current["id"]),
+    }
+
+
+@router.get("/account-tier")
+async def get_account_tier(current=Depends(auth.get_current_user)):
+    """Return the user's account tier and its properties."""
+    tier = settings_store.get_user_tier(current["id"])
+    return {
+        "tier": tier,
+        "allowed_models": settings_store.get_allowed_models(current["id"]),
+        "monthly_tokens": settings_store.get_monthly_token_allowance(current["id"]),
+    }
