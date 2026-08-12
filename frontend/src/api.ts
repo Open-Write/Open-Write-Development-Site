@@ -72,10 +72,12 @@ export interface Project {
 }
 export interface Provider {
   id: string; label: string; base_url: string; api_key: string; models: string[];
+  key_source?: "user" | "openwrite" | "none";
 }
 export interface ProvidersConfig {
   providers: Provider[]; default_model: string; writer_model: string;
   critic_model: string; planner_model: string; model_routing: Record<string, string>;
+  server_key_providers?: string[];
 }
 export interface VersionSummary {
   id: string; phase: string; chapter_number: number | null; content_type: string;

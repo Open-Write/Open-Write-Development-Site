@@ -27,8 +27,8 @@ class ProvidersUpdate(BaseModel):
 async def get_providers(current=Depends(auth.get_current_user)):
     """Return the user's configured providers + model role assignments.
 
-    API keys are returned so the settings UI can show which providers are
-    configured (the user owns these keys).
+    Each provider includes a key_source field: "user" (user's own key),
+    "openwrite" (platform-provided key), or "none" (no key set).
     """
     settings = settings_store.load_settings()
     return {
@@ -38,6 +38,7 @@ async def get_providers(current=Depends(auth.get_current_user)):
         "critic_model": settings.get("critic_model", ""),
         "planner_model": settings.get("planner_model", ""),
         "model_routing": settings.get("model_routing", {}),
+        "server_key_providers": settings_store.get_server_key_providers(),
     }
 
 

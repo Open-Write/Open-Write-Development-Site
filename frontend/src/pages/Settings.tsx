@@ -249,11 +249,27 @@ export default function Settings() {
 
       {/* ── Section 3: Provider Connections ─────────────────────────────────── */}
       <div className="card mb-4 p-5">
-        <h3 className="mb-2 text-base font-semibold text-gray-100">Provider Connections</h3>
+        <h3 className="mb-2 text-base font-semibold text-gray-100">Providers &amp; Default Model</h3>
         <p className="mb-4 text-sm text-gray-500">
-          Connect an LLM provider to use your own API keys. Your key is encrypted at rest
-          and can never be retrieved — only deleted. We never see or store your key in plaintext.
+          Choose your default model for generation using Open-Write tokens, then connect
+          your own provider keys below to unlock additional models.
         </p>
+
+        {/* Default model for Open-Write token generation */}
+        <div className="mb-4 rounded-lg border border-accent-soft/30 bg-accent-soft/5 p-4">
+          <label className="mb-2 block text-sm font-medium text-gray-200">Default model for generation</label>
+          <p className="mb-2 text-xs text-gray-500">
+            This model is used when generating with your Open-Write token allowance.
+          </p>
+          <select className="input appearance-none bg-ink-850"
+            value={cfg.default_model || ""}
+            onChange={(e) => setCfg({ ...cfg, default_model: e.target.value })}>
+            <option value="">— select —</option>
+            {filteredModelOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
 
         {/* Add provider selector */}
         <div className="mb-4 rounded-lg border border-edge p-4 space-y-3">
@@ -305,30 +321,70 @@ export default function Settings() {
 
         {/* Configured providers */}
         <div className="space-y-3">
-          {cfg.providers.map((p) => (
+          {cfg.providers.map((p) => {
+            const hasServerKey = (cfg.server_key_providers || []).includes(p.id);
+            const isUsingOwnKey = p.key_source === "user";
+            return (
             <div key={p.id} className="rounded-lg border border-edge p-4">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h4 className="text-sm font-semibold text-gray-200">{p.label}</h4>
-                  {p.api_key && <span className="badge bg-emerald-600/15 text-emerald-300">connected</span>}
+                  {p.key_source === "openwrite" && (
+                    <span className="badge bg-accent/20 text-accent">Open-Write key</span>
+                  )}
+                  {p.key_source === "user" && (
+                    <span className="badge bg-emerald-600/15 text-emerald-300">Your key</span>
+                  )}
+                  {p.key_source === "none" && (
+                    <span className="badge bg-ink-800 text-gray-500">no key</span>
+                  )}
                 </div>
                 <button className="text-xs text-red-400 hover:text-red-300" onClick={() => removeProvider(p.id)}>
                   Remove
                 </button>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">API key</label>
-                  <input className="input" type="password" placeholder="sk-…"
-                    value={p.api_key || ""}
-                    onChange={(e) => updateProvider(p.id, { api_key: e.target.value })} />
+
+              {/* Key source toggle for providers with server keys */}
+              {hasServerKey && (
+                <div className="mb-3 flex items-center gap-4 text-xs">
+                  <button
+                    className={`rounded px-3 py-1.5 ${!isUsingOwnKey ? "bg-accent/20 text-accent" : "bg-ink-800 text-gray-500"}`}
+                    onClick={() => updateProvider(p.id, { api_key: "" })}>
+                    Use Open-Write key
+                  </button>
+                  <button
+                    className={`rounded px-3 py-1.5 ${isUsingOwnKey ? "bg-emerald-600/15 text-emerald-300" : "bg-ink-800 text-gray-500"}`}
+                    onClick={() => updateProvider(p.id, { api_key: p.api_key || "" })}>
+                    Use your own key
+                  </button>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">Base URL</label>
-                  <input className="input" value={p.base_url || ""}
-                    onChange={(e) => updateProvider(p.id, { base_url: e.target.value })} />
+              )}
+
+              {/* API key input — only show when using own key or no server key */}
+              {(isUsingOwnKey || !hasServerKey) && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-400">API key</label>
+                    <input className="input" type="password" placeholder="sk-…"
+                      value={p.api_key || ""}
+                      onChange={(e) => updateProvider(p.id, { api_key: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-400">Base URL</label>
+                    <input className="input" value={p.base_url || ""}
+                      onChange={(e) => updateProvider(p.id, { base_url: e.target.value })} />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Info when using Open-Write key */}
+              {!isUsingOwnKey && hasServerKey && (
+                <p className="text-xs text-gray-500">
+                  Using Open-Write's {p.label} key. Tokens are deducted from your monthly allowance.
+                  {p.key_source === "openwrite" && " Switch to your own key to use your own account."}
+                </p>
+              )}
+
               <div className="mt-2 flex items-center gap-3">
                 <button className="btn-ghost !py-1 text-xs" onClick={() => test(p.id)} disabled={testing === p.id}>
                   {testing === p.id ? "Testing…" : "Test"}
@@ -345,7 +401,8 @@ export default function Settings() {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
           {cfg.providers.length === 0 && (
             <p className="text-sm text-gray-500">No providers configured yet. Add one above.</p>
           )}
@@ -356,13 +413,12 @@ export default function Settings() {
       <div className="card mb-4 p-5">
         <h3 className="mb-2 text-base font-semibold text-gray-100">Model Routing</h3>
         <p className="mb-4 text-sm text-gray-500">
-          Choose which model handles each part of the pipeline.
-          Leave unset to use the default model.
+          Override the default model for specific pipeline phases.
+          "Open-Write default" uses the model selected in the provider section above.
         </p>
 
         <div className="grid gap-3 md:grid-cols-2">
           {([
-            ["default_model", "Default model"],
             ["writer_model", "Writer"],
             ["critic_model", "Critic / Editorial"],
             ["planner_model", "Planner (Architect)"],
@@ -372,7 +428,7 @@ export default function Settings() {
               <select className="input appearance-none bg-ink-850"
                 value={(cfg[key] as string) || ""}
                 onChange={(e) => setCfg({ ...cfg, [key]: e.target.value })}>
-                <option value="">{key === "default_model" ? "— select —" : "(default)"}</option>
+                <option value="">Open-Write default</option>
                 {filteredModelOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}

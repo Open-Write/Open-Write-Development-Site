@@ -197,15 +197,38 @@ def get_providers() -> list[dict]:
             if p["id"] == "openrouter" and not p.get("api_key"):
                 p["api_key"] = legacy_key
     # Inject server-side keys if the user hasn't set their own.
+    # Track which key source is active so the UI can distinguish.
     if _DEEPSEEK_SERVER_KEY:
         for p in providers:
-            if p["id"] == "deepseek" and not p.get("api_key"):
-                p["api_key"] = _DEEPSEEK_SERVER_KEY
+            if p["id"] == "deepseek":
+                if not p.get("api_key"):
+                    p["api_key"] = _DEEPSEEK_SERVER_KEY
+                    p["key_source"] = "openwrite"
+                else:
+                    p["key_source"] = "user"
     if _MIMO_SERVER_KEY:
         for p in providers:
-            if p["id"] == "mimo" and not p.get("api_key"):
-                p["api_key"] = _MIMO_SERVER_KEY
+            if p["id"] == "mimo":
+                if not p.get("api_key"):
+                    p["api_key"] = _MIMO_SERVER_KEY
+                    p["key_source"] = "openwrite"
+                else:
+                    p["key_source"] = "user"
+    # Mark all other providers with keys as "user" source
+    for p in providers:
+        if "key_source" not in p:
+            p["key_source"] = "user" if p.get("api_key") else "none"
     return providers
+
+
+def get_server_key_providers() -> list[str]:
+    """Return provider IDs that have Open-Write server keys available."""
+    result = []
+    if _DEEPSEEK_SERVER_KEY:
+        result.append("deepseek")
+    if _MIMO_SERVER_KEY:
+        result.append("mimo")
+    return result
 
 
 # ── Convenience accessors used by pipeline/ai code ─────────────────────────────
