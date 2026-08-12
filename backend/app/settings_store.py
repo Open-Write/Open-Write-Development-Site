@@ -43,9 +43,9 @@ TIER_MODEL_ALLOWLIST = {
 
 # Monthly token allowance per tier (input + output tokens combined).
 TIER_MONTHLY_TOKENS = {
-    "basic": 500_000,
-    "pro": 2_000_000,
-    "admin": 10_000_000,
+    "basic": 7_500_000,
+    "pro": 15_000_000,
+    "admin": 100_000_000,
 }
 
 # Per-request holder of the current user's raw settings dict (or None).
