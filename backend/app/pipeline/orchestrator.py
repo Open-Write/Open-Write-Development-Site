@@ -1259,6 +1259,236 @@ async def _exec_architect(state: RunState, project: str, model_call: ModelCall) 
     return {"artifact": rel, "chapter": chapter, "raw_preview": reply[:400]}
 
 
+# ── Evaluator integration helpers ────────────────────────────────────────────
+
+def _extract_beats_from_plan(plan_text: str) -> list[str]:
+    """Extract beat descriptions from a chapter plan for DraftMetrics.
+
+    The architect plan is freeform markdown. Beats are typically bullet points
+    or numbered items under a "## Beats" or "## Scenes" heading. Fall back to
+    splitting on blank lines if no structured beats are found.
+    """
+    import re
+    lines = plan_text.split("\n")
+    beats = []
+    in_beats_section = False
+
+    for line in lines:
+        stripped = line.strip()
+        # Detect a beats/scenes section heading
+        if re.match(r'^#{1,3}\s+(beat|scene|plan|step|moment)', stripped, re.IGNORECASE):
+            in_beats_section = True
+            continue
+        # Detect end of section (next heading)
+        if in_beats_section and re.match(r'^#{1,3}\s+', stripped):
+            if beats:
+                break
+            in_beats_section = False
+            continue
+        # Collect beats: bullet points or numbered items
+        if in_beats_section and stripped:
+            beat = re.sub(r'^[-*•]\s*', '', stripped)
+            beat = re.sub(r'^\d+[.)]\s*', '', beat)
+            if len(beat) > 10:
+                beats.append(beat)
+
+    # Fallback: split plan into paragraphs if no structured beats found
+    if not beats:
+        paragraphs = [p.strip() for p in re.split(r'\n\s*\n', plan_text) if p.strip() and len(p.strip()) > 20]
+        beats = paragraphs[:10]
+
+    return beats
+
+
+async def _invoke_evaluator(
+    state: RunState,
+    project: str,
+    chapter: int,
+    model_call: ModelCall,
+    attempt_metrics: list[dict],
+    attempt_classifications: list[dict],
+    scope: int = 1,
+) -> dict | None:
+    """Invoke the Evaluator after repeated draft failures.
+
+    Mode A: diagnoses root cause and issues a structured verdict that routes
+    work back to the correct station with a patch attached.
+
+    Returns the evaluator verdict dict, or None if the evaluator couldn't
+    produce a useful result.
+    """
+    from .evaluator.classifier import FailureClass
+    from .evaluator.metrics import compute_metrics
+
+    # Read the chapter plan (the brief)
+    plan_path = os.path.join(project, "critic_outputs", f"chapter_{chapter}_plan.md")
+    plan_text = ""
+    if os.path.exists(plan_path):
+        with open(plan_path, "r", encoding="utf-8") as f:
+            plan_text = f.read()
+
+    # Read the last 2 failed drafts
+    cfg = _get_format_config(state.format)
+    draft_path = os.path.join(project, cfg.unit_dir)
+    recent_drafts = []
+    if os.path.isdir(draft_path):
+        # Look for drafts matching this chapter
+        pattern = f"{chapter:03d}_*.md" if state.format == "novel" else f"{chapter:02d}_*.fountain"
+        import glob as _glob
+        drafts = sorted(_glob.glob(os.path.join(draft_path, pattern)))
+        for d in drafts[-2:]:
+            with open(d, "r", encoding="utf-8") as f:
+                recent_drafts.append(f.read())
+
+    # Build the evidence packet
+    beats = _extract_beats_from_plan(plan_text)
+    alloc = state.node_allocations.get(chapter, {})
+    target = alloc.get("target", state.per_chapter_target or 5000)
+
+    # Compute metrics for the most recent attempt
+    from .word_count import strip_artifacts as _sa
+    last_reply = recent_drafts[-1] if recent_drafts else ""
+    clean = _sa(last_reply)
+    prior_deltas = [m.get("delta_pct", 0) for m in attempt_metrics[:-1]] if len(attempt_metrics) > 1 else []
+    metrics = compute_metrics(
+        text=clean, target=target, beats=beats, delta_trend=prior_deltas,
+    )
+
+    # Build the Evaluator prompt
+    forbidden = state.evaluator_ledger.get(str(chapter), {}).get("forbidden_verdicts", [])
+
+    # Action space by scope level
+    if scope == 1:
+        action_space = ["retry_writer_expand", "retry_writer_dramatize", "amend_brief"]
+    elif scope >= 2:
+        action_space = ["retry_writer_expand", "retry_writer_dramatize", "amend_brief",
+                        "replan_chapter", "halt_human"]
+    else:
+        action_space = ["retry_writer_expand"]
+
+    # Check if accept_rebalance is available
+    budget = state.budget_ledger
+    can_rebalance = budget.get("unassigned_deficit", 0) == 0
+    if can_rebalance:
+        action_space.append("accept_rebalance")
+
+    # Build the evidence summary
+    evidence_lines = []
+    evidence_lines.append(f"CHAPTER: {chapter}")
+    evidence_lines.append(f"TARGET: {target} words")
+    evidence_lines.append(f"SCOPE LEVEL: {scope}")
+    evidence_lines.append(f"FORBIDDEN VERDICTS: {', '.join(forbidden) if forbidden else 'none'}")
+    evidence_lines.append(f"ACTION SPACE: {', '.join(action_space)}")
+    evidence_lines.append("")
+    evidence_lines.append("CHAPTER PLAN / BRIEF:")
+    evidence_lines.append(plan_text[:2000] if plan_text else "(no plan found)")
+    evidence_lines.append("")
+    evidence_lines.append("METRICS PER ATTEMPT:")
+    for m in attempt_metrics:
+        evidence_lines.append(f"  Attempt {m['attempt']}: {m['word_count']} words, "
+                              f"delta={m['delta_pct']:.1f}%, "
+                              f"beat_density={m['beat_density']:.1f}, "
+                              f"dialogue={m['dialogue_ratio']:.2f}, "
+                              f"summary_ratio={m['scene_summary_ratio']:.2f}, "
+                              f"repetition={m['repetition_score']:.3f}, "
+                              f"sensory={m['sensory_density']:.1f}")
+    evidence_lines.append("")
+    evidence_lines.append("CLASSIFICATION HISTORY:")
+    for c in attempt_classifications:
+        evidence_lines.append(f"  Attempt {c['attempt']}: Class {c['class']} "
+                              f"({'increments counter' if c['increments_counter'] else 'no increment'}) "
+                              f"— {c['reason']}")
+    evidence_lines.append("")
+    if recent_drafts:
+        evidence_lines.append("MOST RECENT DRAFT (first 1000 chars):")
+        evidence_lines.append(recent_drafts[-1][:1000])
+
+    evidence_packet = "\n".join(evidence_lines)
+
+    # The Evaluator uses the standard cache prefix + evidence in the task slot
+    from .evaluator.classifier import FailureClass
+    evaluator_system = _GLOBAL_SYSTEM_PROMPT
+    evaluator_user = (
+        f"{_build_cache_prefix(state, project)}\n\n"
+        f"--- STEP: EVALUATE {cfg.unit_label.upper()} {chapter} ---\n\n"
+        f"--- EVIDENCE PACKET ---\n{evidence_packet}\n--- END EVIDENCE ---\n\n"
+        "You are the Evaluator for a long-form fiction drafting pipeline. A node has "
+        "failed repeated generation attempts. Your job is to determine WHERE the fault "
+        "lives and route the work there with a patch attached. You do not write prose.\n\n"
+        "THE THREE ROOT CAUSES OF SHORT OUTPUT:\n"
+        "1. MATERIAL STARVATION — the brief doesn't contain enough events. "
+        "Signature: high beat coverage, coherent draft that simply ends. "
+        "Route: amend the brief.\n"
+        "2. EXECUTION COMPRESSION — the brief has enough material; the Writer summarized. "
+        "Signature: beats covered but scene_summary_ratio high, dialogue_ratio low. "
+        "Route: retry the Writer with a directive.\n"
+        "3. BUDGET ERROR — the target is wrong. The draft is tight and complete. "
+        "Route: accept and rebalance.\n\n"
+        "RULES:\n"
+        "- Any action in forbidden_verdicts is unavailable.\n"
+        "- Choose only from the action space given.\n"
+        "- Every diagnosis must cite specific evidence.\n"
+        "- Your patch must be the finished artifact — the actual directive or replacement brief.\n"
+        "- When amending a brief, add MATERIAL (events, turns, obstacles), not adjectives.\n\n"
+        "Return ONLY valid JSON:\n"
+        '{"verdict_id": "string", "node_id": "ch' + str(chapter) + '", '
+        '"scope_level": ' + str(scope) + ', '
+        '"diagnosis": {"root_cause": "material_starvation | execution_compression | budget_error", '
+        '"confidence": 0.0, "reasoning": "string"}, '
+        '"evidence": [{"type": "metric | span", "reference": "string", "observation": "string"}], '
+        '"action": "' + ' | '.join(action_space) + '", '
+        '"target_station": "writer | architect | human", '
+        '"patch": {"type": "writer_directive | brief_replacement | none", "content": "string"}, '
+        '"forbidden_next": ["string"], "escalate_if_fails": true}\n\n'
+        "No preamble, no markdown fences. Only the JSON."
+    )
+
+    try:
+        reply = await model_call(evaluator_system, evaluator_user)
+    except Exception as exc:
+        log.warning("Evaluator call failed: %s", exc)
+        return None
+
+    # Parse the Evaluator's JSON output
+    import json as _json
+    json_str = reply.strip()
+    if json_str.startswith("```"):
+        json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+        json_str = re.sub(r"\s*```$", "", json_str)
+
+    try:
+        verdict = _json.loads(json_str)
+    except _json.JSONDecodeError:
+        log.warning("Evaluator returned invalid JSON: %s", reply[:200])
+        return None
+
+    # Validate the verdict
+    action = verdict.get("action", "")
+    if action in forbidden:
+        log.warning("Evaluator returned forbidden action: %s", action)
+        return None
+    if action not in action_space:
+        log.warning("Evaluator returned out-of-scope action: %s", action)
+        return None
+
+    # Record the verdict in the ledger
+    ledger = state.evaluator_ledger.setdefault(str(chapter), {
+        "attempts": [], "verdicts": [], "forbidden_verdicts": [],
+        "proper_failure_count": 0, "evaluator_invocations": 0,
+    })
+    ledger["verdicts"].append({
+        "verdict_id": verdict.get("verdict_id", ""),
+        "scope_level": scope,
+        "diagnosis": verdict.get("diagnosis", {}).get("reasoning", ""),
+        "action": action,
+        "patch_applied": bool(verdict.get("patch", {}).get("content")),
+        "outcome": "pending",
+    })
+    ledger["evaluator_invocations"] = ledger.get("evaluator_invocations", 0) + 1
+
+    return verdict
+
+
 async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> dict:
     cfg = _get_format_config(state.format)
     chapter = state.units[state.current_unit_index]
@@ -1310,9 +1540,101 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
     PAUSE_SECONDS = 300  # 5 minutes
 
     last_failure_reason = ""
+    attempt_metrics: list[dict] = []  # DraftMetrics per attempt for the Evaluator
+    attempt_classifications: list[dict] = []  # Classification per attempt
+
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        # After 3 failures, pause 5 minutes before attempts 4 and 5
+        # After PAUSE_AFTER failures, invoke the Evaluator instead of sleeping.
+        # The Evaluator diagnoses root cause and issues a structured verdict that
+        # routes work back to the correct station with a patch attached.
         if attempt == PAUSE_AFTER + 1:
+            evaluator_result = await _invoke_evaluator(
+                state, project, chapter, model_call,
+                attempt_metrics, attempt_classifications, scope=1,
+            )
+            if evaluator_result:
+                # Evaluator issued a verdict — apply the patch and retry
+                action = evaluator_result.get("action", "")
+                patch = evaluator_result.get("patch", {})
+                patch_content = patch.get("content", "")
+
+                if action == "retry_writer_expand" and patch_content:
+                    # Append the Evaluator's directive to the retry note
+                    retry_note = (
+                        f"\n\nEVALUATOR DIRECTIVE:\n{patch_content}\n\n"
+                        f"This is attempt {attempt}/{MAX_ATTEMPTS}. "
+                        f"Follow the directive above. Output ONLY clean prose narrative.\n"
+                    )
+                    user = base_user + retry_note
+                    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
+                    alloc = state.node_allocations.get(chapter, {})
+                    chapter_floor = alloc.get("min", state.per_chapter_min or state.word_floor)
+                    usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, chapter_floor))
+                    if usable:
+                        body = strip_artifacts(reply).strip() + "\n"
+                        rel = _write_file(_unit_rel(chapter, state), project, body)
+                        from .word_count import count_words
+                        wc = count_words(os.path.join(project, rel))
+                        return {"artifact": rel, "chapter": chapter, "word_count": wc, "raw_preview": reply[:400]}
+                    last_failure_reason = reason
+                    # Continue to attempt 5 with the Evaluator's directive baked in
+                    continue
+
+                elif action == "amend_brief" and patch_content:
+                    # Replace the chapter plan with the Evaluator's amended brief
+                    plan_path = os.path.join(project, "critic_outputs", f"chapter_{chapter}_plan.md")
+                    if os.path.exists(plan_path):
+                        # Version the old plan
+                        with open(plan_path, "r", encoding="utf-8") as f:
+                            old_plan = f.read()
+                        _write_file(
+                            f"critic_outputs/chapter_{chapter}_plan_v{attempt}.md",
+                            project, old_plan,
+                        )
+                    _write_file(f"critic_outputs/chapter_{chapter}_plan.md", project, patch_content)
+                    # Rebuild the writer prompt with the new brief
+                    plan = patch_content
+                    base_user = _with_instructions(
+                        f"{prefix}\n\n"
+                        f"--- STEP: WRITE {cfg.unit_label.upper()} {chapter} ---\n"
+                        f"{step_instruction}"
+                        f"{cfg.writer_prompt_hint}\n\n"
+                        f"--- ARCHITECT PLAN ---\n{plan}\n--- END ---\n\n"
+                        f"--- PRIOR {cfg.unit_label.upper()} TAIL ---\n{_prior_chapter_tail(project, chapter)}\n--- END ---\n\n"
+                        f"Write the full {cfg.unit_label} {chapter} now. "
+                        f"Target length: ~{state.per_chapter_target} words for this {cfg.unit_label} "
+                        f"(range: {state.per_chapter_min}–{state.per_chapter_max} words). "
+                        f"Follow the word count target from the architect plan for this {cfg.unit_label}."
+                        f"{rewrite_note}",
+                        state,
+                    )
+                    user = base_user
+                    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
+                    alloc = state.node_allocations.get(chapter, {})
+                    chapter_floor = alloc.get("min", state.per_chapter_min or state.word_floor)
+                    usable, reason = _is_usable_prose(reply, word_floor=max(MIN_PROSE_WORDS, chapter_floor))
+                    if usable:
+                        body = strip_artifacts(reply).strip() + "\n"
+                        rel = _write_file(_unit_rel(chapter, state), project, body)
+                        from .word_count import count_words
+                        wc = count_words(os.path.join(project, rel))
+                        return {"artifact": rel, "chapter": chapter, "word_count": wc, "raw_preview": reply[:400]}
+                    last_failure_reason = reason
+                    continue
+
+                elif action == "replan_chapter":
+                    # Re-invoke the Architect for this chapter with the Evaluator's diagnosis
+                    # This is a more expensive operation — only at scope 2+
+                    # For now, fall through to the stock retry
+                    pass
+
+                elif action == "halt_human":
+                    raise BadProseError(
+                        f"{cfg.unit_label.capitalize()} {chapter}: Evaluator recommends halting. "
+                        f"Diagnosis: {evaluator_result.get('diagnosis', {}).get('reasoning', 'unknown')}"
+                    )
+
+            # If Evaluator didn't produce a useful verdict, do the stock pause
             await asyncio.sleep(PAUSE_SECONDS)
 
         # Inject retry context on 2nd+ attempt
@@ -1344,6 +1666,51 @@ async def _exec_writer(state: RunState, project: str, model_call: ModelCall) -> 
             return {"artifact": rel, "chapter": chapter, "word_count": wc, "raw_preview": reply[:400]}
 
         last_failure_reason = reason
+
+        # Step 1: Classify the failure
+        from .evaluator.classifier import classify, FailureClass
+        from .word_count import strip_artifacts as _sa
+        clean = _sa(reply)
+        clean_wc = len(clean.split())
+        classification = classify(
+            output=reply, word_count=clean_wc,
+            word_target=state.per_chapter_target or 5000,
+            word_floor=chapter_floor,
+            finish_reason=None,  # not available from model_call
+        )
+        attempt_classifications.append({
+            "attempt": attempt,
+            "class": classification.failure_class.value,
+            "subtype": classification.subtype.value if classification.subtype else None,
+            "reason": classification.reason,
+            "increments_counter": classification.increments_counter,
+        })
+
+        # Step 2: Compute metrics for Class II/III failures
+        if classification.failure_class in (FailureClass.DEGENERATE, FailureClass.PROPER):
+            from .evaluator.metrics import compute_metrics
+            # Extract beats from the plan
+            beats = _extract_beats_from_plan(plan)
+            prior_deltas = [m.get("delta_pct", 0) for m in attempt_metrics]
+            metrics = compute_metrics(
+                text=clean, target=state.per_chapter_target or 5000,
+                beats=beats, delta_trend=prior_deltas,
+            )
+            attempt_metrics.append({
+                "attempt": attempt,
+                "word_count": metrics.word_count,
+                "delta_pct": metrics.delta_pct,
+                "beat_density": metrics.beat_density,
+                "dialogue_ratio": metrics.dialogue_ratio,
+                "scene_summary_ratio": metrics.scene_summary_ratio,
+                "repetition_score": metrics.repetition_score,
+                "sensory_density": metrics.sensory_density,
+            })
+
+            # Update proper_failure_count
+            if classification.increments_counter:
+                state.proper_failure_count[chapter] = state.proper_failure_count.get(chapter, 0) + 1
+
         # Don't sleep between last attempt and raising
         if attempt < MAX_ATTEMPTS and attempt != PAUSE_AFTER:
             await asyncio.sleep(3)
