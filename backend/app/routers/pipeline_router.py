@@ -630,7 +630,7 @@ async def generate_revision_plan(project_id: str, req: GenerateRevisionPlanReque
     """
     project = _resolve_project(project_id, current["id"])
     api_key, model_name, base_url = _resolve_call_model(None)
-    model_call = _make_model_call(api_key, model_name, base_url, step="revision-planner")
+    model_call = _make_model_call(api_key, model_name, base_url, step_name="revision-planner")
     try:
         plan = await orchestrator.generate_revision_plan(project, req.feedback, model_call)
     except RuntimeError as exc:
