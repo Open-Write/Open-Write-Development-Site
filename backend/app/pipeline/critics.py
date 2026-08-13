@@ -33,6 +33,24 @@ EDITORIAL_TYPE = "editorial"
 # Each forces a specific review lens and the output contract (located findings
 # + chapter_hash + VERDICT). Condensed from the Open-Write critic architecture.
 
+_VERDICT_CONTRACT = """
+
+After your prose report, append this EXACT structured block:
+
+--- VERDICT JSON ---
+{"verdict": "PASS or ADVANCE or REVISE", "reason": "one sentence"}
+--- END VERDICT JSON ---
+
+The verdict field is REQUIRED. Choose exactly one:
+- PASS = no issues found, ship as-is
+- ADVANCE = minor notes, acceptable to ship
+- REVISE = must fix before shipping
+
+If your prose report identifies ANY located finding that is not trivial, the
+verdict MUST be REVISE. A PASS verdict with located findings is a contradiction.
+"""
+
+
 _SHOW = """\
 You are the SHOW critic. Your single job: enforce show-don't-tell.
 
@@ -50,10 +68,10 @@ Output contract (do not deviate):
 1. Begin with the chapter_hash line you are given.
 2. A ## Findings section with at least three located findings (Line N + quote).
 3. A one-paragraph overall assessment.
-4. End with: VERDICT: PASS  (or ADVANCE or REVISE)
+4. End with the VERDICT JSON block.
 PASS = nothing to fix. ADVANCE = minor notes, ship as-is. REVISE = must fix.
 Be specific and honest. A chapter with real tell-spots gets REVISE, not PASS.
-"""
+""" + _VERDICT_CONTRACT
 
 
 _VOICE = """\
@@ -77,8 +95,8 @@ Output contract:
 1. Begin with the chapter_hash line you are given.
 2. ## Findings with at least three located findings (Line N + quote).
 3. A one-paragraph overall assessment.
-4. End with: VERDICT: PASS | ADVANCE | REVISE
-"""
+4. End with the VERDICT JSON block.
+""" + _VERDICT_CONTRACT
 
 
 _PALETTE = """\
@@ -98,8 +116,8 @@ Output contract:
 1. Begin with the chapter_hash line you are given.
 2. ## Findings with at least three located findings (Line N + quote).
 3. A one-paragraph overall assessment.
-4. End with: VERDICT: PASS | ADVANCE | REVISE
-"""
+4. End with the VERDICT JSON block.
+""" + _VERDICT_CONTRACT
 
 
 _CONTINUITY = """\
@@ -121,8 +139,8 @@ Output contract:
 1. Begin with the chapter_hash line you are given.
 2. ## Findings with at least three located findings (Line N + quote).
 3. A one-paragraph overall assessment.
-4. End with: VERDICT: PASS | ADVANCE | REVISE
-"""
+4. End with the VERDICT JSON block.
+""" + _VERDICT_CONTRACT
 
 
 _NATURALISM = """\
@@ -143,8 +161,8 @@ Output contract:
 1. Begin with the chapter_hash line you are given.
 2. ## Findings with at least three located findings (Line N + quote).
 3. A one-paragraph overall assessment.
-4. End with: VERDICT: PASS | ADVANCE | REVISE
-"""
+4. End with the VERDICT JSON block.
+""" + _VERDICT_CONTRACT
 
 
 _EDITORIAL = """\
@@ -165,8 +183,8 @@ Output contract:
 1. Begin with the chapter_hash line you are given.
 2. ## Findings with at least three located findings (Line N + quote).
 3. A one-paragraph overall assessment.
-4. End with: VERDICT: PASS | ADVANCE | REVISE
-"""
+4. End with the VERDICT JSON block.
+""" + _VERDICT_CONTRACT
 
 _SYSTEM_PROMPTS = {
     "show": _SHOW, "voice": _VOICE, "palette": _PALETTE,
@@ -217,8 +235,61 @@ def ensure_gate_format(content: str, chapter_hash: str) -> str:
 
 
 def extract_verdict(content: str) -> str:
-    m = re.search(r"VERDICT\s*[:=]?\s*(PASS|ADVANCE|REVISE)", content, re.IGNORECASE)
-    return m.group(1).upper() if m else "UNKNOWN"
+    """Extract PASS/ADVANCE/REVISE verdict from critic output.
+
+    Tries multiple patterns in order of specificity:
+    1. Structured VERDICT JSON block (most reliable — machine-parseable)
+    2. Explicit VERDICT: marker
+    3. Standalone verdict word after ## Verdict heading
+    4. "recommend REVISE" / "recommend PASS" style language
+    5. "I verdict REVISE" / "my verdict is PASS" patterns
+    6. Standalone REVISE/PASS/ADVANCE on its own line near end of text
+
+    Returns "REVISE" as default if no verdict is found. This is deliberately
+    conservative — an unnecessary revision pass costs time, but a missed
+    REVISE ships broken prose.
+    """
+    # 1. Structured JSON block (new contract)
+    m = re.search(r'---\s*VERDICT JSON\s*---\s*(\{[^}]+\})\s*---\s*END VERDICT JSON\s*---', content, re.DOTALL)
+    if m:
+        try:
+            import json
+            data = json.loads(m.group(1))
+            v = str(data.get("verdict", "")).upper().strip()
+            if v in ("PASS", "ADVANCE", "REVISE"):
+                return v
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # 2. Explicit VERDICT: marker (most reliable legacy format)
+    m = re.search(r'(?i)VERDICT\s*[:=]\s*(ADVANCE|REVISE|PASS)', content)
+    if m:
+        return m.group(1).upper()
+
+    # 3. ## Verdict heading with verdict word on next line
+    m = re.search(r'(?i)##\s*Verdict\s*\n\s*(ADVANCE|REVISE|PASS)', content)
+    if m:
+        return m.group(1).upper()
+
+    # 4. "recommend REVISE" style
+    m = re.search(r'(?i)recommend\s+(ADVANCE|REVISE|PASS)', content)
+    if m:
+        return m.group(1).upper()
+
+    # 5. "my verdict is REVISE" / "I verdict PASS" style
+    m = re.search(r'(?i)(?:my\s+)?verdict\s+(?:is\s+)?(ADVANCE|REVISE|PASS)', content)
+    if m:
+        return m.group(1).upper()
+
+    # 6. Standalone verdict word on its own line (near end of text)
+    last_500 = content[-500:]
+    m = re.search(r'(?i)^\s*(ADVANCE|REVISE|PASS)\s*$', last_500, re.MULTILINE)
+    if m:
+        return m.group(1).upper()
+
+    # 7. No verdict found — default to REVISE (conservative: prefer unnecessary
+    #    revision over shipping unchecked prose).
+    return "REVISE"
 
 
 # ── Prompt composition ────────────────────────────────────────────────────────
@@ -232,10 +303,16 @@ def build_messages(critic_type: str, chapter_text: str, chapter_hash: str,
         user_parts.append(f"--- ATTACHED CONTEXT ---\n{context}\n--- END CONTEXT ---\n")
     user_parts.append("--- CHAPTER ---\n" + chapter_text + "\n--- END CHAPTER ---")
     user_parts.append(
-        "\nReview this chapter now. Remember: begin your report with the "
-        f"chapter_hash line (chapter_hash: {chapter_hash}), include a ## Findings "
-        "section with at least three located findings each citing Line N and a "
-        "quoted span, then your assessment, then VERDICT."
+        "\nReview this chapter now. Remember:\n"
+        f"1. Begin your report with the chapter_hash line (chapter_hash: {chapter_hash})\n"
+        "2. Include a ## Findings section with at least three located findings "
+        "each citing Line N and a quoted span\n"
+        "3. Your assessment\n"
+        "4. End with the VERDICT JSON block:\n"
+        '--- VERDICT JSON ---\n'
+        '{"verdict": "PASS or ADVANCE or REVISE", "reason": "one sentence"}\n'
+        '--- END VERDICT JSON ---\n\n'
+        "If you found ANY located findings that are not trivial, the verdict MUST be REVISE."
     )
     return system, [{"role": "user", "content": "\n".join(user_parts)}]
 
@@ -287,6 +364,9 @@ async def run_critic(
     OpenAI-compatible provider via app.ai.openrouter.run_chat. The model reply
     is post-processed by compose_artifact so the result always carries the real
     chapter hash.
+
+    If the verdict is missing from the first attempt, retries once with an
+    explicit instruction to include the verdict block.
     """
     from app.ai.openrouter import run_chat
     from .word_count import strip_artifacts
@@ -297,7 +377,45 @@ async def run_critic(
     chapter_hash = hash_chapter(chapter_path)
 
     system, messages = build_messages(critic_type, chapter_text, chapter_hash, context)
-    reply = await run_chat(api_key, model_id, system, messages, temperature=temperature, base_url=base_url)
 
-    chapter_number = chapter_number_from_filename(chapter_path)
-    return compose_artifact(critic_type, chapter_number, reply, chapter_hash, project_path)
+    MAX_ATTEMPTS = 2
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        reply = await run_chat(api_key, model_id, system, messages, temperature=temperature, base_url=base_url)
+
+        chapter_number = chapter_number_from_filename(chapter_path)
+        result = compose_artifact(critic_type, chapter_number, reply, chapter_hash, project_path)
+
+        # Check if verdict was extracted (not the default REVISE fallback)
+        # by looking for the structured JSON block or explicit marker in the raw output.
+        has_structured_verdict = bool(re.search(
+            r'---\s*VERDICT JSON\s*---', reply, re.IGNORECASE
+        ))
+        has_explicit_verdict = bool(re.search(
+            r'(?i)VERDICT\s*[:=]\s*(ADVANCE|REVISE|PASS)', reply
+        ))
+
+        if has_structured_verdict or has_explicit_verdict:
+            return result  # Verdict found, accept
+
+        # Verdict missing — retry with explicit instruction
+        if attempt < MAX_ATTEMPTS:
+            messages = list(messages)  # copy
+            messages.append({"role": "assistant", "content": reply})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Your report is missing the required verdict block. "
+                    "You MUST end your report with:\n\n"
+                    '--- VERDICT JSON ---\n'
+                    '{"verdict": "PASS or ADVANCE or REVISE", "reason": "one sentence"}\n'
+                    '--- END VERDICT JSON ---\n\n'
+                    "If you found ANY located findings that are not trivial, the verdict MUST be REVISE. "
+                    "Reproduce your full report with the verdict block appended."
+                ),
+            })
+        else:
+            # Second attempt also missing verdict — result already has REVISE
+            # as default from extract_verdict. Accept it.
+            pass
+
+    return result

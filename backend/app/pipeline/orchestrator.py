@@ -1063,7 +1063,12 @@ def _parse_editorial_verdict(text: str) -> str:
       - 'VERDICT: REVISE'
       - '## Verdict\\nADVANCE'
       - 'verdict is REVISE'
-    Returns "ADVANCE" as the default if no verdict is found (assume good faith).
+      - 'recommend PASS'
+      - Standalone verdict word on its own line near end
+
+    Returns "REVISE" as the default if no verdict is found. This is
+    deliberately conservative — an unnecessary revision pass costs time,
+    but a missed REVISE ships broken prose.
     """
     import re
     # Look for explicit VERDICT: markers first.
@@ -1078,8 +1083,18 @@ def _parse_editorial_verdict(text: str) -> str:
     m = re.search(r'(?i)recommend\s+(ADVANCE|REVISE|PASS)', text)
     if m:
         return m.group(1).upper()
-    # Default: assume ADVANCE if no verdict is explicitly stated.
-    return "ADVANCE"
+    # Look for "my verdict is REVISE" style.
+    m = re.search(r'(?i)(?:my\s+)?verdict\s+(?:is\s+)?(ADVANCE|REVISE|PASS)', text)
+    if m:
+        return m.group(1).upper()
+    # Standalone verdict word on its own line near end of text.
+    last_500 = text[-500:]
+    m = re.search(r'(?i)^\s*(ADVANCE|REVISE|PASS)\s*$', last_500, re.MULTILINE)
+    if m:
+        return m.group(1).upper()
+    # Default: REVISE (conservative — prefer unnecessary revision over
+    # shipping unchecked prose).
+    return "REVISE"
 
 
 def _locate_outline(project: str) -> Optional[str]:
