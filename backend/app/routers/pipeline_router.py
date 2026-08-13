@@ -615,6 +615,66 @@ async def start_revision(project_id: str, req: StartRevisionRequest,
     }
 
 
+class GenerateRevisionPlanRequest(BaseModel):
+    feedback: str
+
+
+@router.post("/{project_id}/generate-revision-plan")
+async def generate_revision_plan(project_id: str, req: GenerateRevisionPlanRequest,
+                                 current=Depends(auth.get_current_user)):
+    """Generate a revision plan from user feedback using the Evaluator.
+
+    The Evaluator analyzes the feedback alongside the manuscript, adversarial
+    reports, and critic reports to produce a structured revision plan.
+    The plan is saved but NOT executed until the user approves it.
+    """
+    project = _resolve_project(project_id, current["id"])
+    api_key, model_name, base_url = _resolve_call_model(None)
+    model_call = _make_model_call(api_key, model_name, base_url, step="revision-planner")
+    try:
+        plan = await orchestrator.generate_revision_plan(project, req.feedback, model_call)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"plan": plan}
+
+
+class ApproveRevisionPlanRequest(BaseModel):
+    approved: bool
+    adjustments: str = ""
+
+
+@router.post("/{project_id}/approve-revision-plan")
+async def approve_revision_plan(project_id: str, req: ApproveRevisionPlanRequest,
+                                current=Depends(auth.get_current_user)):
+    """Approve or reject the revision plan.
+
+    If approved, the plan is marked as approved and revision can proceed.
+    If rejected with adjustments, the plan is saved with the user's notes
+    for regeneration.
+    """
+    project = _resolve_project(project_id, current["id"])
+    try:
+        result = await orchestrator.approve_revision_plan(
+            project, req.approved, req.adjustments
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
+@router.get("/{project_id}/revision-plan")
+async def get_revision_plan(project_id: str, current=Depends(auth.get_current_user)):
+    """Get the current revision plan (if any)."""
+    project = _resolve_project(project_id, current["id"])
+    state = orchestrator.load_run_state(project)
+    if state is None:
+        return {"plan": None}
+    return {
+        "plan": state.revision_plan or None,
+        "approved": state.revision_plan_approved,
+    }
+
+
 @router.get("/{project_id}/editorial-reports")
 async def editorial_reports(project_id: str, current=Depends(auth.get_current_user)):
     project = _resolve_project(project_id, current["id"])

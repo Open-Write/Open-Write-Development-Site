@@ -175,6 +175,15 @@ export const api = {
   startRevision: (pid: string, body: { chapters: number[]; revision_notes: string }) =>
     request<{ status: string; current_phase: string; revision_chapters: number[] }>(
       `/pipeline/${pid}/start-revision`, { method: "POST", body }),
+  generateRevisionPlan: (pid: string, body: { feedback: string }) =>
+    request<{ plan: Record<string, unknown> }>(
+      `/pipeline/${pid}/generate-revision-plan`, { method: "POST", body }),
+  approveRevisionPlan: (pid: string, body: { approved: boolean; adjustments?: string }) =>
+    request<{ status: string; plan?: Record<string, unknown>; adjustments?: string }>(
+      `/pipeline/${pid}/approve-revision-plan`, { method: "POST", body }),
+  getRevisionPlan: (pid: string) =>
+    request<{ plan: Record<string, unknown> | null; approved: boolean }>(
+      `/pipeline/${pid}/revision-plan`),
   resetRun: (pid: string, body?: { phase?: string; chapter?: number; max_chapter_retries?: number; max_editorial_lock_retries?: number }) =>
     request<{ reset: boolean; mode: string; current_phase?: string; max_chapter_retries?: number; max_editorial_lock_retries?: number; editorial_lock_retries?: number }>(
       `/pipeline/${pid}/reset-run`, { method: "POST", body: body ?? {} }),

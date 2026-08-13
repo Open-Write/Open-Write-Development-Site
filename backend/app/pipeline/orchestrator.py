@@ -377,6 +377,8 @@ class RunState:
     max_editorial_lock_retries: int = 2  # max editorial revision rounds before force-advancing
     cost_log: list[dict] = field(default_factory=list)  # per-step cost records from openrouter
     revision_light: bool = False  # skip per-chapter critics during revision (writer + adversarial only)
+    revision_plan: dict = field(default_factory=dict)  # Evaluator-generated revision plan awaiting approval
+    revision_plan_approved: bool = False  # whether user has approved the revision plan
     writer_model: str = ""  # model used for writer (for capacity lookup)
     default_model: str = ""  # default model for the run
 
@@ -425,6 +427,8 @@ class RunState:
             revision_light=d.get("revision_light", False),
             writer_model=d.get("writer_model", ""),
             default_model=d.get("default_model", ""),
+            revision_plan=d.get("revision_plan", {}),
+            revision_plan_approved=d.get("revision_plan_approved", False),
         )
 
 
@@ -2068,15 +2072,80 @@ async def _exec_adversarial(state: RunState, project: str, model_call: ModelCall
     cfg = _get_format_config(state.format)
     prefix = _build_cache_prefix(state, project)
     manuscript = _read_file(cfg.assembled_path, project)
+
+    # Assemble revision notes context if this is a revision pass
+    revision_context = ""
+    if state.revision_notes:
+        revision_context = (
+            f"\n\n--- REVISION CONTEXT ---\n"
+            f"The author has requested revisions with the following feedback:\n"
+            f"{state.revision_notes}\n"
+            f"Your adversarial read should evaluate whether the revision addressed these concerns.\n"
+            f"--- END REVISION CONTEXT ---"
+        )
+
     user = _with_instructions(
         f"{prefix}\n\n"
         f"--- STEP: ADVERSARIAL READ ---\n"
         f"Read the full {cfg.unit_label} collection and produce the adversarial report with located "
-        "findings and a dimensional score out of 10.\n\n"
-        f"--- FULL {cfg.assembled_label} ---\n{manuscript}\n--- END ---",
+        f"findings and a dimensional score out of 10.\n\n"
+        f"Your report MUST:\n"
+        f"1. Begin with a ## Summary section with an overall assessment\n"
+        f"2. Include ## Findings with specific located issues (chapter/page + quoted span)\n"
+        f"3. End with ## Dimensional Score (X/10) with justification\n"
+        f"4. Be a CRITICAL ANALYSIS, not a retelling of the story\n\n"
+        f"--- FULL {cfg.assembled_label} ---\n{manuscript}\n--- END ---"
+        f"{revision_context}",
         state,
     )
-    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
+
+    # Retry with validation — reject output that echoes prose instead of analyzing
+    MAX_ATTEMPTS = 3
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
+
+        # Validate: adversarial output must look like a report, not prose
+        reply_lower = reply.lower()
+        has_report_structure = (
+            ("## summary" in reply_lower or "## overview" in reply_lower or
+             "## overall" in reply_lower) and
+            ("## finding" in reply_lower or "## issue" in reply_lower or
+             "## problem" in reply_lower or "## concern" in reply_lower) and
+            ("score" in reply_lower or "/10" in reply_lower or "out of 10" in reply_lower)
+        )
+
+        # Check if output is suspiciously long (likely echoed the manuscript)
+        reply_words = len(reply.split())
+        manuscript_words = len(manuscript.split()) if manuscript else 0
+        is_too_long = manuscript_words > 0 and reply_words > manuscript_words * 0.5
+
+        # Check if output starts like prose (dialogue or narrative)
+        starts_like_prose = (
+            reply.strip().startswith('"') or
+            reply.strip().startswith("The ") and "chapter" not in reply_lower[:200] or
+            reply.strip().startswith("She ") or reply.strip().startswith("He ")
+        )
+
+        if has_report_structure and not is_too_long:
+            break  # Valid report
+
+        if attempt < MAX_ATTEMPTS:
+            log.warning("Adversarial read attempt %d: output looks like %s (report=%s, "
+                        "words=%d, manuscript_words=%d). Retrying.",
+                        attempt,
+                        "prose" if starts_like_prose or is_too_long else "unstructured",
+                        has_report_structure, reply_words, manuscript_words)
+            user = (
+                f"{user}\n\n"
+                f"PREVIOUS ATTEMPT FAILED: Your output was {reply_words} words and "
+                f"{'echoed the manuscript' if is_too_long else 'did not follow the report structure'}. "
+                f"Produce a STRUCTURED ADVERSARIAL REPORT with ## Summary, ## Findings, and "
+                f"## Dimensional Score sections. Do NOT retell the story."
+            )
+        else:
+            log.warning("Adversarial read: all %d attempts produced suspect output. "
+                        "Saving best attempt.", MAX_ATTEMPTS)
+
     rel = _write_file(os.path.join("coverage_reports", "adversarial_read.md"),
                       project, reply.strip() + "\n")
     return {"artifact": rel, "raw_preview": reply[:400]}
@@ -2555,6 +2624,168 @@ async def prepare_rerun(project: str, phase: str, chapter: Optional[int] = None)
         state.status = "running"
         save_run_state(state)
         return state
+
+
+async def generate_revision_plan(
+    project: str,
+    user_feedback: str,
+    model_call: ModelCall,
+) -> dict:
+    """Generate a revision plan from user feedback using the Evaluator.
+
+    The Evaluator analyzes the user's feedback alongside the current manuscript,
+    adversarial reports, and critic reports to produce a structured revision plan.
+    The plan is saved to RunState but NOT executed until the user approves it.
+
+    Returns the revision plan dict.
+    """
+    project = os.path.abspath(project)
+    state = load_run_state(project)
+    if state is None:
+        raise RuntimeError("No active run found.")
+
+    cfg = _get_format_config(state.format)
+    prefix = _build_cache_prefix(state, project)
+
+    # Read the current adversarial report if available
+    adversarial = _read_file(
+        os.path.join("coverage_reports", "adversarial_read.md"), project
+    ) or "(no adversarial report available)"
+
+    # Read the assembled manuscript summary (first 3000 chars for context)
+    manuscript = _read_file(cfg.assembled_path, project) or ""
+    manuscript_excerpt = manuscript[:3000] + ("..." if len(manuscript) > 3000 else "")
+
+    # Read critic reports summary
+    critic_summaries = []
+    for ch in state.units[:5]:  # first 5 chapters for context
+        for ctype in ("show", "voice", "palette", "continuity", "naturalism"):
+            report = _read_file(
+                os.path.join("critic_outputs", f"chapter_{ch}_{ctype}.md"), project
+            )
+            if report:
+                # Extract verdict line
+                for line in report.split("\n"):
+                    if "VERDICT:" in line.upper():
+                        critic_summaries.append(f"Ch{ch} {ctype}: {line.strip()}")
+                        break
+
+    # Read current outline
+    outline = _read_file(os.path.join("bible", "04_outline.md"), project) or "(no outline)"
+
+    # Build the Evaluator prompt
+    evidence = (
+        f"PROJECT: {state.project_name}\n"
+        f"FORMAT: {state.format}\n"
+        f"CHAPTERS: {len(state.units)} ({', '.join(str(ch) for ch in state.units[:10])}{'...' if len(state.units) > 10 else ''})\n"
+        f"WORD TARGET: {state.word_count_min}–{state.word_count_max} total\n\n"
+        f"--- USER FEEDBACK ---\n{user_feedback}\n--- END FEEDBACK ---\n\n"
+        f"--- ADVERSARIAL REPORT ---\n{adversarial[:3000]}\n--- END REPORT ---\n\n"
+        f"--- CRITIC VERDICTS ---\n{chr(10).join(critic_summaries[:20]) if critic_summaries else '(none)'}\n--- END VERDICTS ---\n\n"
+        f"--- CURRENT OUTLINE ---\n{outline[:2000]}\n--- END OUTLINE ---\n\n"
+        f"--- MANUSCRIPT EXCERPT (first 3000 chars) ---\n{manuscript_excerpt}\n--- END EXCERPT ---"
+    )
+
+    system = _GLOBAL_SYSTEM_PROMPT
+    user = (
+        f"{prefix}\n\n"
+        f"--- STEP: GENERATE REVISION PLAN ---\n\n"
+        f"--- EVIDENCE ---\n{evidence}\n--- END EVIDENCE ---\n\n"
+        "You are the Evaluator for a long-form fiction pipeline. The user has provided "
+        "feedback on a completed manuscript and requested revisions. Your job is to analyze "
+        "the feedback and produce a STRUCTURED REVISION PLAN.\n\n"
+        "The plan must specify:\n"
+        "1. ROOT CAUSES — what underlying issues caused the problems the user identified\n"
+        "2. CHAPTER ACTIONS — which chapters need revision and what specific changes\n"
+        "3. STRUCTURAL ACTIONS — whether the bible, outline, or voice spec need rework\n"
+        "4. PRIORITY ORDER — execute structural fixes before chapter-level fixes\n"
+        "5. RISK ASSESSMENT — what might break if we revise (continuity, plants/payoffs)\n\n"
+        "Be honest about scope. If the feedback reveals a fundamental problem with the "
+        "premise or structure, say so — don't just prescribe surface-level rewrites.\n\n"
+        "Return ONLY valid JSON:\n"
+        '{\n'
+        '  "revision_plan_id": "string",\n'
+        '  "root_causes": [\n'
+        '    {"cause": "string", "severity": "critical | major | minor", "affected_chapters": [int]}\n'
+        '  ],\n'
+        '  "structural_actions": [\n'
+        '    {"action": "rework_bible | revise_outline | update_voice_spec", "description": "string", "priority": 1}\n'
+        '  ],\n'
+        '  "chapter_actions": [\n'
+        '    {"chapter": int, "action": "rewrite | revise | expand | cut | merge", "description": "string", "priority": int, "depends_on": ["string"]}\n'
+        '  ],\n'
+        '  "risk_assessment": [\n'
+        '    {"risk": "string", "mitigation": "string"}\n'
+        '  ],\n'
+        '  "estimated_effort": "light | moderate | heavy | fundamental",\n'
+        '  "summary": "string (2-3 sentences summarizing the plan for the user)"\n'
+        '}\n\n'
+        "No preamble, no markdown fences. Only the JSON."
+    )
+
+    reply = await model_call(system, user)
+
+    # Parse the response
+    json_str = reply.strip()
+    if json_str.startswith("```"):
+        json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+        json_str = re.sub(r"\s*```$", "", json_str)
+
+    try:
+        plan = json.loads(json_str)
+    except json.JSONDecodeError:
+        # If JSON parsing fails, wrap the raw response
+        plan = {
+            "revision_plan_id": "raw_" + str(hash(reply))[:8],
+            "root_causes": [{"cause": "See summary", "severity": "major", "affected_chapters": []}],
+            "structural_actions": [],
+            "chapter_actions": [],
+            "risk_assessment": [],
+            "estimated_effort": "unknown",
+            "summary": reply[:500],
+            "raw_response": reply,
+        }
+
+    # Add metadata
+    plan["generated_at"] = datetime.now().isoformat()
+    plan["user_feedback"] = user_feedback
+    plan["status"] = "pending_approval"
+
+    # Save to RunState
+    state.revision_plan = plan
+    state.revision_plan_approved = False
+    save_run_state(state)
+
+    return plan
+
+
+async def approve_revision_plan(project: str, approved: bool, adjustments: str = "") -> dict:
+    """Approve or reject the revision plan.
+
+    If approved, the plan is marked as approved and the revision can proceed.
+    If rejected with adjustments, the plan is regenerated with the adjustments.
+    """
+    project = os.path.abspath(project)
+    lock = _try_lock_or_busy(project)
+    async with lock:
+        state = load_run_state(project)
+        if state is None:
+            raise RuntimeError("No active run found.")
+        if not state.revision_plan:
+            raise RuntimeError("No revision plan to approve.")
+
+        if approved:
+            state.revision_plan["status"] = "approved"
+            state.revision_plan_approved = True
+            save_run_state(state)
+            return {"status": "approved", "plan": state.revision_plan}
+        else:
+            state.revision_plan["status"] = "rejected"
+            state.revision_plan_approved = False
+            if adjustments:
+                state.revision_plan["user_adjustments"] = adjustments
+            save_run_state(state)
+            return {"status": "rejected", "adjustments": adjustments}
 
 
 async def start_revision(project: str, chapters: list[int], revision_notes: str = "") -> RunState:
