@@ -248,6 +248,16 @@ PHASE_SPECS: dict[str, PhaseSpec] = {
         gate_phase=True,
         fallback_prompt="",
     ),
+    "revision_structural": PhaseSpec(
+        "revision_structural", "Structural revision (bible / voice / outline)", PROJECT,
+        rule_file=None,
+        gate_phase=False,
+        fallback_prompt=(
+            "You are revising a structural element of the project (bible, voice spec, "
+            "or outline) based on the Evaluator's revision plan. Follow the instructions "
+            "precisely. Preserve what works. Only change what the instructions call for."
+        ),
+    ),
 }
 
 
@@ -380,6 +390,8 @@ class RunState:
     revision_light: bool = False  # skip per-chapter critics during revision (writer + adversarial only)
     revision_plan: dict = field(default_factory=dict)  # Evaluator-generated revision plan awaiting approval
     revision_plan_approved: bool = False  # whether user has approved the revision plan
+    revision_steps: list[dict] = field(default_factory=list)  # ordered execution steps from approved plan
+    revision_step_index: int = 0  # current step in revision_steps
     writer_model: str = ""  # model used for writer (for capacity lookup)
     default_model: str = ""  # default model for the run
 
@@ -430,6 +442,8 @@ class RunState:
             default_model=d.get("default_model", ""),
             revision_plan=d.get("revision_plan", {}),
             revision_plan_approved=d.get("revision_plan_approved", False),
+            revision_steps=d.get("revision_steps", []),
+            revision_step_index=d.get("revision_step_index", 0),
         )
 
 
@@ -2172,6 +2186,81 @@ async def _exec_finalize(state: RunState, project: str, model_call: ModelCall) -
     return {"finalize_result": result}
 
 
+async def _exec_revision_structural(state: RunState, project: str, model_call: ModelCall) -> dict:
+    """Execute a structural revision step (bible, voice, outline changes).
+
+    Reads the current artifact, sends it to the LLM with the Evaluator's
+    instructions for what to change, and saves the revised version.
+    """
+    step = state.revision_steps[state.revision_step_index]
+    action_type = step.get("action", "")
+    description = step.get("description", "")
+
+    cfg = _get_format_config(state.format)
+    prefix = _build_cache_prefix(state, project)
+
+    # Determine which artifact to revise
+    if action_type == "update_voice_spec":
+        artifact_path = "bible/LOCKED_VOICE_SPEC.md"
+        artifact_label = "VOICE SPEC"
+    elif action_type == "rework_bible":
+        artifact_path = "bible/01_concept.md"
+        artifact_label = "BIBLE CONCEPT"
+    elif action_type == "revise_outline":
+        artifact_path = "bible/04_outline.md"
+        artifact_label = "OUTLINE"
+    else:
+        # Unknown structural action — skip
+        log.warning("Unknown structural action: %s, skipping", action_type)
+        step["status"] = "skipped"
+        return {"skipped": True, "action": action_type}
+
+    current_content = _read_file(artifact_path, project)
+    if not current_content:
+        log.warning("Could not read %s for structural revision, skipping", artifact_path)
+        step["status"] = "skipped"
+        return {"skipped": True, "action": action_type}
+
+    # Build the prompt for the structural revision
+    user = _with_instructions(
+        f"{prefix}\n\n"
+        f"--- STEP: REVISE {artifact_label} ---\n"
+        f"The Evaluator has identified the following issue and recommended a change:\n\n"
+        f"--- EVALUATOR INSTRUCTIONS ---\n{description}\n--- END INSTRUCTIONS ---\n\n"
+        f"--- CURRENT {artifact_label} ---\n{current_content}\n--- END CURRENT ---\n\n"
+        f"Revise the {artifact_label} according to the Evaluator's instructions. "
+        f"Preserve what works. Only change what the instructions call for. "
+        f"Output the COMPLETE revised {artifact_label} — do not abbreviate or summarize.\n",
+        state,
+    )
+
+    reply = await model_call(_GLOBAL_SYSTEM_PROMPT, user)
+    body = strip_artifacts(reply).strip() + "\n"
+
+    # Version the old artifact before overwriting
+    import glob as _glob
+    base, ext = os.path.splitext(artifact_path)
+    backups = sorted(_glob.glob(os.path.join(project, f"{base}_v*{ext}")))
+    version_num = len(backups) + 1
+    backup_path = f"{base}_v{version_num}{ext}"
+    _write_file(backup_path, project, current_content)
+
+    # Save the revised artifact
+    _write_file(artifact_path, project, body)
+
+    step["status"] = "completed"
+    step["result"] = {
+        "artifact": artifact_path,
+        "backup": backup_path,
+        "word_count": len(body.split()),
+    }
+
+    log.info("Structural revision completed: %s (%s) — %d words",
+             action_type, artifact_path, len(body.split()))
+
+    return step["result"]
+
+
 _EXECUTORS: dict[str, Callable] = {
     "bible": _exec_bible,
     "voice": _exec_voice,
@@ -2184,6 +2273,7 @@ _EXECUTORS: dict[str, Callable] = {
     "assemble": _exec_assemble,
     "adversarial": _exec_adversarial,
     "finalize": _exec_finalize,
+    "revision_structural": _exec_revision_structural,
 }
 
 
@@ -2297,6 +2387,38 @@ async def advance_phase(project: str, resolve_call: ModelResolver) -> dict:
     """
     async with _run_lock(project):
         return await _advance_phase_locked(project, resolve_call)
+
+
+def _advance_to_next_revision_step(state: RunState) -> None:
+    """Set the pipeline cursor to the next revision step.
+
+    Called after a revision step completes. Reads the step list and sets
+    current_phase and current_unit_index to execute the next step.
+    """
+    if state.revision_step_index >= len(state.revision_steps):
+        state.status = "complete"
+        state.current_phase = None
+        return
+
+    step = state.revision_steps[state.revision_step_index]
+    step["status"] = "in_progress"
+
+    if step["type"] == "structural":
+        state.current_phase = "revision_structural"
+        log.info("Revision step %d: structural — %s",
+                 state.revision_step_index, step.get("action", ""))
+    elif step["type"] == "chapter":
+        state.current_phase = "writer"
+        ch = step.get("chapter")
+        if ch and ch in state.units:
+            state.current_unit_index = state.units.index(ch)
+        log.info("Revision step %d: chapter %d — %s",
+                 state.revision_step_index, ch or 0, step.get("action", ""))
+    else:
+        log.warning("Unknown revision step type: %s, skipping", step.get("type"))
+        step["status"] = "skipped"
+        state.revision_step_index += 1
+        _advance_to_next_revision_step(state)
 
 
 async def _advance_phase_locked(project: str, resolve_call: ModelResolver) -> dict:
@@ -2520,10 +2642,30 @@ async def _advance_phase_locked(project: str, resolve_call: ModelResolver) -> di
                    state.units[state.current_unit_index] not in state.revision_chapters):
                 state.current_unit_index += 1
             if state.current_unit_index >= len(state.units):
-                # All revision chapters done - mark complete
-                state.status = "complete"
-                state.revision_chapters = []
-                state.current_phase = None  # or "assemble" to re-assemble
+                # All revision chapters done — advance to next revision step or complete
+                if state.revision_steps:
+                    state.revision_step_index += 1
+                    if state.revision_step_index < len(state.revision_steps):
+                        _advance_to_next_revision_step(state)
+                    else:
+                        # All revision steps done — assemble
+                        state.status = "complete"
+                        state.revision_chapters = []
+                        state.current_phase = None
+                else:
+                    state.status = "complete"
+                    state.revision_chapters = []
+                    state.current_phase = None
+
+    # Handle revision step advancement for structural steps
+    if phase == "revision_structural" and state.revision_steps:
+        state.revision_step_index += 1
+        if state.revision_step_index < len(state.revision_steps):
+            _advance_to_next_revision_step(state)
+        else:
+            state.status = "complete"
+            state.current_phase = None
+
     save_run_state(state)
 
     return {
@@ -2810,10 +2952,11 @@ async def approve_revision_plan(project: str, approved: bool, adjustments: str =
 async def start_revision(project: str, chapters: list[int], revision_notes: str = "") -> RunState:
     """Reset the pipeline into revision mode for the specified chapters.
 
-    Sets status back to 'running', winds back to the writer phase for the
-    first chapter in the list, and stores which chapters need revision.
-    The auto-run loop then processes only those chapters through
-    writer → critics → editorial → verify_unit.
+    If an approved revision plan exists, builds an ordered step list:
+    1. Structural actions first (bible, voice, outline changes)
+    2. Chapter actions in priority order (with dependency tracking)
+
+    If no plan exists, falls back to the old behavior (writer-only revision).
     """
     project = os.path.abspath(project)
     lock = _try_lock_or_busy(project)
@@ -2828,6 +2971,7 @@ async def start_revision(project: str, chapters: list[int], revision_notes: str 
         valid = sorted(set(chapters))
         state.revision_chapters = valid
         state.revision_notes = revision_notes.strip()
+        state.project_path = project
 
         # Append revision notes to the creative brief so the writer sees them
         if revision_notes:
@@ -2835,18 +2979,79 @@ async def start_revision(project: str, chapters: list[int], revision_notes: str 
                 f"\n\n--- REVISION NOTES ---\n{revision_notes.strip()}\n--- END REVISION NOTES ---"
             )
 
-        # Reset unit cursor to the first chapter that needs revision
-        first_chapter = valid[0]
-        if first_chapter in state.units:
-            state.current_unit_index = state.units.index(first_chapter)
+        # Build revision steps from approved plan (if available)
+        steps = []
+        if state.revision_plan_approved and state.revision_plan:
+            plan = state.revision_plan
+
+            # Structural actions first (bible, voice, outline changes)
+            structural = plan.get("structural_actions", [])
+            structural.sort(key=lambda a: a.get("priority", 99))
+            for action in structural:
+                steps.append({
+                    "type": "structural",
+                    "action": action.get("action", ""),
+                    "description": action.get("description", ""),
+                    "status": "pending",
+                })
+
+            # Chapter actions in priority order
+            chapter_actions = plan.get("chapter_actions", [])
+            chapter_actions.sort(key=lambda a: a.get("priority", 99))
+            for action in chapter_actions:
+                ch = action.get("chapter")
+                if ch and ch in valid:
+                    steps.append({
+                        "type": "chapter",
+                        "chapter": ch,
+                        "action": action.get("action", "revise"),
+                        "description": action.get("description", ""),
+                        "depends_on": action.get("depends_on", []),
+                        "status": "pending",
+                    })
+
+            # If no chapter actions in plan but chapters were selected,
+            # add default revision steps for each chapter
+            if not any(s["type"] == "chapter" for s in steps):
+                for ch in valid:
+                    steps.append({
+                        "type": "chapter",
+                        "chapter": ch,
+                        "action": "revise",
+                        "description": revision_notes or "Revise based on feedback",
+                        "status": "pending",
+                    })
         else:
-            state.current_unit_index = 0
+            # No plan — default to writer-only revision for selected chapters
+            for ch in valid:
+                steps.append({
+                    "type": "chapter",
+                    "chapter": ch,
+                    "action": "revise",
+                    "description": revision_notes or "Revise based on feedback",
+                    "status": "pending",
+                })
+
+        state.revision_steps = steps
+        state.revision_step_index = 0
+
+        # Set the pipeline to start with the first step
+        first_step = steps[0] if steps else None
+        if first_step and first_step["type"] == "structural":
+            state.current_phase = "revision_structural"
+        else:
+            state.current_phase = "writer"
+            first_chapter = first_step.get("chapter", valid[0]) if first_step else valid[0]
+            if first_chapter in state.units:
+                state.current_unit_index = state.units.index(first_chapter)
+            else:
+                state.current_unit_index = 0
 
         # Clear retry counts for the chapters being revised
         for ch in valid:
             state.chapter_retries.pop(ch, None)
 
-        state.current_phase = "writer"
+        state.revision_light = True
         state.status = "running"
         state.last_error = None
         save_run_state(state)
