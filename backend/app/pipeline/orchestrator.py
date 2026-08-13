@@ -121,7 +121,7 @@ PER_UNIT = "per_unit"
 
 # Ordered phase keys. Project phases run once; per-unit phases run for each
 # chapter in the manifest scope.
-PROJECT_PHASES = ["bible", "voice", "editorial_lock"]
+PROJECT_PHASES = ["bible", "voice", "editorial_lock", "revision_structural"]
 UNIT_PHASES = ["architect", "writer", "critics", "editorial", "verify_unit"]
 CLOSING_PHASES = ["assemble", "adversarial", "finalize"]
 
