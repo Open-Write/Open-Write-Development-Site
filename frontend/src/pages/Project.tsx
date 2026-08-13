@@ -111,6 +111,13 @@ export default function Project() {
         <div className="mt-1 flex items-center gap-3">
           <h1 className="text-2xl font-semibold text-gray-100">{project?.name || "Project"}</h1>
           {project && <span className="badge bg-ink-800 text-gray-400 capitalize">{project.format}</span>}
+          <Link
+            to={`/projects/${id}/studio`}
+            className="ml-auto btn-ghost !py-1.5 text-xs"
+            title="Open the full document editor with project file browser"
+          >
+            Open in Studio
+          </Link>
         </div>
         {project?.description && <p className="mt-1 text-sm text-gray-500">{project.description}</p>}
       </div>
@@ -453,6 +460,7 @@ function PipelineTab({
 
         {showRevision && (
           <RevisionPanel
+            projectId={projectId}
             units={state?.units || []}
             editorialReports={editorialReports}
             autoRunning={autoRunning}
@@ -570,12 +578,14 @@ function PipelineTab({
 
 // ── Revision panel ────────────────────────────────────────────────────────
 function RevisionPanel({
+  projectId,
   units,
   editorialReports,
   autoRunning,
   unitLabel,
   onStartRevision,
 }: {
+  projectId: string;
   units: number[];
   editorialReports: { chapter: number; content: string | null }[];
   autoRunning: boolean;
@@ -585,69 +595,262 @@ function RevisionPanel({
   const [selected, setSelected] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [plan, setPlan] = useState<Record<string, unknown> | null>(null);
+  const [planApproved, setPlanApproved] = useState(false);
+  const [generatingPlan, setGeneratingPlan] = useState(false);
+  const [adjustments, setAdjustments] = useState("");
+  const [showAdjustments, setShowAdjustments] = useState(false);
+  const [error, setError] = useState("");
 
   const toggle = (ch: number) => {
     setSelected((prev) => (prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]));
   };
 
-  const handleStart = async () => {
-    if (selected.length === 0) return;
-    setBusy(true);
+  const generatePlan = async () => {
+    if (!notes.trim()) return;
+    setGeneratingPlan(true); setError(""); setPlan(null);
     try {
+      const res = await api.generateRevisionPlan(projectId, { feedback: notes.trim() });
+      setPlan(res.plan);
+    } catch (e) { setError((e as Error).message); }
+    finally { setGeneratingPlan(false); }
+  };
+
+  const approvePlan = async () => {
+    setBusy(true); setError("");
+    try {
+      await api.approveRevisionPlan(projectId, { approved: true });
+      setPlanApproved(true);
+      // Now start the actual revision
       await onStartRevision(selected, notes);
-    } finally {
-      setBusy(false);
-    }
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const rejectPlan = async () => {
+    setBusy(true); setError("");
+    try {
+      await api.approveRevisionPlan(projectId, {
+        approved: false,
+        adjustments: adjustments.trim() || undefined,
+      });
+      setPlan(null);
+      setPlanApproved(false);
+      setShowAdjustments(false);
+      // If adjustments were provided, regenerate the plan
+      if (adjustments.trim()) {
+        const combined = `${notes}\n\nADJUSTMENTS: ${adjustments.trim()}`;
+        const res = await api.generateRevisionPlan(projectId, { feedback: combined });
+        setPlan(res.plan);
+        setAdjustments("");
+      }
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const effortColors: Record<string, string> = {
+    light: "text-emerald-400",
+    moderate: "text-amber-400",
+    heavy: "text-orange-400",
+    fundamental: "text-red-400",
   };
 
   return (
     <div className="card mt-6 border border-accent/20 bg-accent/5 p-5">
       <h3 className="mb-4 text-lg font-semibold text-gray-100">Revise project {unitLabel}s</h3>
 
-      <div className="mb-6 space-y-3">
-        {units.map((ch) => {
-          const report = editorialReports.find((r) => r.chapter === ch);
-          return (
-            <div key={ch} className="flex flex-col border-b border-edge/50 pb-3">
-              <label className="flex cursor-pointer items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(ch)}
-                  onChange={() => toggle(ch)}
-                />
-                <span className="text-sm font-medium text-gray-200">{unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1)} {ch}</span>
-              </label>
-              {report?.content && (
-                <div className="mt-2 pl-7 text-xs italic text-gray-400">
-                  {report.content.substring(0, 300)}…
+      {/* Step 1: Select chapters and enter feedback */}
+      {!plan && !planApproved && (
+        <>
+          <div className="mb-6 space-y-3">
+            {units.map((ch) => {
+              const report = editorialReports.find((r) => r.chapter === ch);
+              return (
+                <div key={ch} className="flex flex-col border-b border-edge/50 pb-3">
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(ch)}
+                      onChange={() => toggle(ch)}
+                    />
+                    <span className="text-sm font-medium text-gray-200">{unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1)} {ch}</span>
+                  </label>
+                  {report?.content && (
+                    <div className="mt-2 pl-7 text-xs italic text-gray-400">
+                      {report.content.substring(0, 300)}…
+                    </div>
+                  )}
                 </div>
+              );
+            })}
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-xs text-gray-400">Revision instructions (your feedback)</label>
+              <textarea
+                className="input h-24 resize-y text-sm"
+                placeholder={`What should be changed in these ${unitLabel}s? Paste your adversarial read feedback here.`}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+
+            {error && <p className="text-xs text-red-400">{error}</p>}
+
+            <button
+              className="btn-primary w-full"
+              disabled={generatingPlan || selected.length === 0 || !notes.trim() || autoRunning}
+              onClick={generatePlan}
+            >
+              {generatingPlan
+                ? "Evaluator analyzing feedback…"
+                : `Generate revision plan for ${selected.length} ${selected.length === 1 ? unitLabel : unitLabel + "s"}`}
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Step 2: Review the revision plan */}
+      {plan && !planApproved && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-edge bg-ink-900 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-gray-200">Revision Plan</h4>
+              {plan.estimated_effort && (
+                <span className={`text-xs font-medium ${effortColors[plan.estimated_effort as string] || "text-gray-400"}`}>
+                  Effort: {String(plan.estimated_effort).charAt(0).toUpperCase() + String(plan.estimated_effort).slice(1)}
+                </span>
               )}
             </div>
-          );
-        })}
-      </div>
 
-      <div className="space-y-4">
-        <div>
-          <label className="mb-1 block text-xs text-gray-400">Revision instructions (your feedback)</label>
-          <textarea
-            className="input h-24 resize-y text-sm"
-            placeholder={`What should be changed in these ${unitLabel}s?`}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
+            {/* Summary */}
+            {plan.summary && (
+              <p className="mb-4 text-sm text-gray-300">{String(plan.summary)}</p>
+            )}
+
+            {/* Root causes */}
+            {Array.isArray(plan.root_causes) && plan.root_causes.length > 0 && (
+              <div className="mb-4">
+                <h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Root causes</h5>
+                <div className="space-y-2">
+                  {(plan.root_causes as Array<Record<string, unknown>>).map((rc, i) => (
+                    <div key={i} className="rounded border border-edge/50 p-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className={`badge ${
+                          rc.severity === "critical" ? "bg-red-600/15 text-red-300" :
+                          rc.severity === "major" ? "bg-amber-600/15 text-amber-300" :
+                          "bg-ink-800 text-gray-400"
+                        }`}>{String(rc.severity)}</span>
+                        <span className="text-gray-300">{String(rc.cause)}</span>
+                      </div>
+                      {Array.isArray(rc.affected_chapters) && rc.affected_chapters.length > 0 && (
+                        <p className="mt-1 text-gray-500">
+                          Affects: {unitLabel} {(rc.affected_chapters as number[]).join(`, ${unitLabel} `)}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Chapter actions */}
+            {Array.isArray(plan.chapter_actions) && plan.chapter_actions.length > 0 && (
+              <div className="mb-4">
+                <h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Chapter actions</h5>
+                <div className="space-y-2">
+                  {(plan.chapter_actions as Array<Record<string, unknown>>).map((ca, i) => (
+                    <div key={i} className="rounded border border-edge/50 p-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-200">{unitLabel} {String(ca.chapter)}</span>
+                        <span className="badge bg-accent/15 text-accent">{String(ca.action)}</span>
+                      </div>
+                      <p className="mt-1 text-gray-400">{String(ca.description)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Structural actions */}
+            {Array.isArray(plan.structural_actions) && plan.structural_actions.length > 0 && (
+              <div className="mb-4">
+                <h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Structural changes</h5>
+                <div className="space-y-2">
+                  {(plan.structural_actions as Array<Record<string, unknown>>).map((sa, i) => (
+                    <div key={i} className="rounded border border-amber-600/20 bg-amber-600/5 p-2 text-xs">
+                      <span className="font-medium text-amber-300">{String(sa.action).replace(/_/g, " ")}</span>
+                      <p className="mt-1 text-gray-400">{String(sa.description)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Risk assessment */}
+            {Array.isArray(plan.risk_assessment) && plan.risk_assessment.length > 0 && (
+              <div className="mb-4">
+                <h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Risks</h5>
+                <div className="space-y-2">
+                  {(plan.risk_assessment as Array<Record<string, unknown>>).map((r, i) => (
+                    <div key={i} className="rounded border border-edge/50 p-2 text-xs">
+                      <p className="text-gray-300">{String(r.risk)}</p>
+                      <p className="mt-1 text-gray-500">Mitigation: {String(r.mitigation)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+
+          {/* Approve / Reject buttons */}
+          <div className="flex gap-3">
+            <button
+              className="btn-primary flex-1"
+              disabled={busy || autoRunning}
+              onClick={approvePlan}
+            >
+              {busy ? "Starting revision…" : "Approve & start revision"}
+            </button>
+            <button
+              className="btn-ghost flex-1"
+              disabled={busy}
+              onClick={() => setShowAdjustments(!showAdjustments)}
+            >
+              Request changes
+            </button>
+          </div>
+
+          {/* Adjustment input */}
+          {showAdjustments && (
+            <div className="space-y-2">
+              <textarea
+                className="input h-20 resize-y text-sm"
+                placeholder="What changes do you want to the plan? The Evaluator will regenerate."
+                value={adjustments}
+                onChange={(e) => setAdjustments(e.target.value)}
+              />
+              <button
+                className="btn-ghost w-full text-xs"
+                disabled={busy || !adjustments.trim()}
+                onClick={rejectPlan}
+              >
+                {busy ? "Regenerating…" : "Submit adjustments & regenerate plan"}
+              </button>
+            </div>
+          )}
         </div>
+      )}
 
-        <button
-          className="btn-primary w-full"
-          disabled={busy || selected.length === 0 || autoRunning}
-          onClick={handleStart}
-        >
-          {busy
-            ? "Starting revision…"
-            : `Start revision for ${selected.length} ${selected.length === 1 ? unitLabel : unitLabel + "s"}`}
-        </button>
-      </div>
+      {/* Step 3: Revision in progress */}
+      {planApproved && (
+        <div className="rounded-lg border border-emerald-600/20 bg-emerald-600/5 p-4 text-sm text-emerald-300">
+          Revision plan approved. Revision is running — check the pipeline log for progress.
+        </div>
+      )}
     </div>
   );
 }
