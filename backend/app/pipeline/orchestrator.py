@@ -2752,6 +2752,7 @@ async def generate_revision_plan(
     plan["status"] = "pending_approval"
 
     # Save to RunState
+    state.project_path = project  # ensure save goes to the resolved path, not a stale one
     state.revision_plan = plan
     state.revision_plan_approved = False
     save_run_state(state)
@@ -2773,6 +2774,8 @@ async def approve_revision_plan(project: str, approved: bool, adjustments: str =
             raise RuntimeError("No active run found.")
         if not state.revision_plan:
             raise RuntimeError("No revision plan to approve.")
+
+        state.project_path = project  # ensure save goes to the resolved path
 
         if approved:
             state.revision_plan["status"] = "approved"
