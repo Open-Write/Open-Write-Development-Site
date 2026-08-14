@@ -187,6 +187,9 @@ class ReviewMarkRequest(BaseModel):
 async def get_state(project_id: str, current=Depends(auth.get_current_user)):
     """Get the current audiobook pipeline state."""
     pdir = _project_dir(project_id, current["id"])
+    sp = _state_path(pdir)
+    if not sp.exists():
+        raise HTTPException(404, "Audiobook pipeline not initialized.")
     return _load_state(pdir)
 
 
