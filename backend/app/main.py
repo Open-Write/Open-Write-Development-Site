@@ -43,6 +43,7 @@ from app.routers import (
     admin_router,
     auth_router,
     editorial_router,
+    file_browser_router,
     help_router,
     projects_router,
     settings_router,
@@ -132,6 +133,7 @@ async def api_health_check():
 app.include_router(admin_router.router)
 app.include_router(auth_router.router)
 app.include_router(editorial_router.router)
+app.include_router(file_browser_router.router)
 app.include_router(projects_router.router)
 app.include_router(settings_router.router)
 app.include_router(versions_router.router)

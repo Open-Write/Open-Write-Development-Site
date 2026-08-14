@@ -40,5 +40,20 @@ def user_projects_dir(user_id: str) -> Path:
 
 
 def project_path(user_id: str, project_id: str) -> Path:
-    """Absolute on-disk path for a single project."""
+    """Absolute on-disk path for a single project.
+
+    If the project was imported with a ``source_path``, that directory is used
+    directly (files are not copied).  Otherwise the default data-root layout
+    applies.
+    """
+    # Avoid circular import — db is imported later.
+    from app import db
+    row = db.query_one(
+        "SELECT source_path FROM projects WHERE id = %s AND user_id = %s",
+        (project_id, user_id),
+    )
+    if row and row.get("source_path"):
+        sp = Path(row["source_path"])
+        if sp.is_dir():
+            return sp
     return user_projects_dir(user_id) / str(project_id)

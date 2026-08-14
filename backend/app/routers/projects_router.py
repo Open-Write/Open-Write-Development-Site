@@ -2,6 +2,7 @@
 DATA_ROOT/users/{user_id}/projects/{project_id}/."""
 from __future__ import annotations
 
+import os
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,6 +37,7 @@ def _serialize(row: dict) -> dict:
         "name": row["name"],
         "description": row.get("description") or "",
         "format": row.get("format") or "novel",
+        "source_path": row.get("source_path"),
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
@@ -57,6 +59,75 @@ async def create_project(req: CreateProjectRequest, current=Depends(auth.get_cur
                 "state", "profiles"):
         (pdir / sub).mkdir(parents=True, exist_ok=True)
     return _serialize(row)
+
+
+# ── Import existing project from a local directory ───────────────────────
+EXPECTED_DIRS = {"bible", "manuscript", "profiles", "critic_outputs",
+                 "coverage_reports", "state", "notes", "summaries"}
+
+
+class ImportProjectRequest(BaseModel):
+    name: str
+    source_path: str
+    description: str = ""
+    format: str = "novel"
+
+
+@router.post("/import")
+async def import_project(req: ImportProjectRequest,
+                         current=Depends(auth.get_current_user)):
+    if not req.name.strip():
+        raise HTTPException(400, "Project name is required.")
+    source = os.path.realpath(req.source_path.strip())
+    if not os.path.isdir(source):
+        raise HTTPException(400, f"Directory not found: {source}")
+
+    # Detect format from directory contents if not explicitly provided.
+    fmt = req.format if req.format in VALID_FORMATS else "novel"
+    if req.format == "novel":
+        # Auto-detect screenplay / tv if matching files exist.
+        for f in os.listdir(source):
+            low = f.lower()
+            if low.endswith(".fountain") or "screenplay" in low:
+                fmt = "screenplay"
+                break
+            if low.endswith(".tv") or "tv_script" in low:
+                fmt = "tv"
+                break
+
+    # Scan what's inside the source directory.
+    found_dirs = set()
+    file_count = 0
+    for entry in os.scandir(source):
+        if entry.is_dir():
+            found_dirs.add(entry.name.lower())
+        elif entry.is_file():
+            file_count += 1
+
+    recognized = found_dirs & EXPECTED_DIRS
+    if not recognized and file_count == 0:
+        raise HTTPException(
+            400,
+            "The directory appears empty. Expected an Open-Write project "
+            "structure (bible/, manuscript/, profiles/, etc.).",
+        )
+
+    # Create the DB record with source_path.
+    row = db.execute(
+        "INSERT INTO projects (user_id, name, description, format, source_path) "
+        "VALUES (%s, %s, %s, %s, %s) RETURNING *",
+        (current["id"], req.name.strip(), req.description.strip(), fmt, source),
+    )
+
+    # Ensure standard subdirectories exist in the source (non-destructive).
+    for sub in ("bible", "manuscript", "critic_outputs", "coverage_reports",
+                "state", "profiles"):
+        os.makedirs(os.path.join(source, sub), exist_ok=True)
+
+    result = _serialize(row)
+    result["recognized_dirs"] = sorted(recognized)
+    result["file_count"] = file_count
+    return result
 
 
 @router.get("")
