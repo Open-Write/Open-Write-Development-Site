@@ -346,9 +346,14 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
         generated += 1
 
     _save_state(pdir, state)
-    log.info("Audiobook generate_scripts result: generated=%d, errors=%d, skipped_approved=%d",
-             generated, len(errors), skipped_approved)
-    return {"generated": generated, "errors": errors, "skipped_approved": skipped_approved}
+    log.info("Audiobook generate_scripts result: generated=%d, errors=%d, skipped_approved=%d, total=%d",
+             generated, len(errors), skipped_approved, len(state["chapters"]))
+    return {
+        "generated": generated,
+        "errors": errors,
+        "skipped_approved": skipped_approved,
+        "total_chapters": len(state["chapters"]),
+    }
 
 
 @router.get("/{project_id}/script/{chapter_id}")
