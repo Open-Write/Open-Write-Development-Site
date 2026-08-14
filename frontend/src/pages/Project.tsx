@@ -605,7 +605,7 @@ function RevisionPanel({
   const loadAdversarialNotes = async () => {
     setLoadingAdversarial(true); setError("");
     try {
-      const data = await api.getOutputFile(projectId, "coverage_reports/adversarial_read.md");
+      const data = await api.outputFile(projectId, "coverage_reports/adversarial_read.md");
       if (data.content) {
         setNotes(data.content);
       } else {
