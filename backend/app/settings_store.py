@@ -213,6 +213,9 @@ def get_providers() -> list[dict]:
                 if not p.get("api_key"):
                     p["api_key"] = _MIMO_SERVER_KEY
                     p["key_source"] = "openwrite"
+                    # The Open-Write company key is pay-as-you-go, NOT on the
+                    # token plan — it only works against the standard endpoint.
+                    p["base_url"] = "https://api.xiaomimimo.com/v1"
                 else:
                     p["key_source"] = "user"
     # Mark all other providers with keys as "user" source

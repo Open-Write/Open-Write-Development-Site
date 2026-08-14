@@ -349,6 +349,10 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
             errors.append(f"Chapter {ch['id']}: {exc}")
             continue
 
+        if not reply or not reply.strip():
+            errors.append(f"Chapter {ch['id']}: model returned an empty response (provider upstream error?)")
+            continue
+
         # Save script
         script_path = scripts_dir / f"ch{ch['id']:02d}.jsonl"
         script_path.write_text(reply.strip() + "\n", encoding="utf-8")
