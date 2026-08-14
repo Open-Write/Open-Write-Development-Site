@@ -265,6 +265,7 @@ async def generate_scripts(project_id: str, current=Depends(auth.get_current_use
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
     generated = 0
+    errors: list[str] = []
     for ch in state["chapters"]:
         if ch["script_status"] == "approved":
             continue  # skip approved scripts
@@ -272,6 +273,7 @@ async def generate_scripts(project_id: str, current=Depends(auth.get_current_use
         # Read manuscript chapter
         source_path = pdir / ch["source"]
         if not source_path.exists():
+            errors.append(f"Chapter {ch['id']}: source file not found ({ch['source']})")
             continue
         manuscript_text = source_path.read_text(encoding="utf-8-sig")
 
@@ -318,6 +320,7 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
             )
         except Exception as exc:
             log.error("Script generation failed for chapter %d: %s", ch["id"], exc)
+            errors.append(f"Chapter {ch['id']}: {exc}")
             continue
 
         # Save script
@@ -329,7 +332,7 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
         generated += 1
 
     _save_state(pdir, state)
-    return {"generated": generated}
+    return {"generated": generated, "errors": errors}
 
 
 @router.get("/{project_id}/script/{chapter_id}")

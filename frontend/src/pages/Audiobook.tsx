@@ -128,11 +128,21 @@ function ScriptStage({ projectId, state, onChange }: { projectId: string; state:
   const [editingChapter, setEditingChapter] = useState<number | null>(null);
   const [scriptContent, setScriptContent] = useState("");
 
+  const [generatedCount, setGeneratedCount] = useState<number | null>(null);
+
   const generateScripts = async () => {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setGeneratedCount(null);
     try {
-      await api.post(`/audiobook/${projectId}/script/generate`, {});
+      const res = await api.post(`/audiobook/${projectId}/script/generate`, {}) as { generated: number; errors?: string[] };
       await onChange();
+      if (res.generated === 0) {
+        setError("No scripts were generated. Check that you have manuscript chapters and a model configured in Settings → Model routing.");
+      } else {
+        setGeneratedCount(res.generated);
+      }
+      if (res.errors && res.errors.length > 0) {
+        setError(res.errors.join("; "));
+      }
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -217,6 +227,9 @@ function ScriptStage({ projectId, state, onChange }: { projectId: string; state:
         </div>
       ))}
 
+      {generatedCount !== null && generatedCount > 0 && (
+        <p className="text-xs text-emerald-400">Generated scripts for {generatedCount} chapter(s).</p>
+      )}
       {error && <p className="text-xs text-red-400">{error}</p>}
 
       {allApproved && (
