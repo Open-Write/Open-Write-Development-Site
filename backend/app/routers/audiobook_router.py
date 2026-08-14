@@ -7,6 +7,9 @@ Four stages:
   4. Review  — Section-by-section playback, user marks errors for regeneration
 
 State is persisted in audiobook_state.json alongside pipeline_run.json.
+
+TTS synthesis uses the MiMo TTS API (OpenAI-compatible) via the existing
+provider system. Tokens are tracked through the existing token usage system.
 """
 from __future__ import annotations
 
@@ -18,14 +21,73 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app import auth, config, db
+from app import auth, config, db, settings_store
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/audiobook", tags=["audiobook"])
+
+
+# ── TTS helper ───────────────────────────────────────────────────────────────
+
+def _resolve_mimo_provider() -> tuple[str, str]:
+    """Resolve the MiMo provider API key and base URL from settings."""
+    from app.ai.providers import resolve
+    providers = settings_store.get_providers()
+    for p in providers:
+        if p["id"] == "mimo" and p.get("api_key"):
+            return p["api_key"], p.get("base_url", "https://token-plan-sgp.xiaomimimo.com/v1")
+    # Fallback: try resolving mimo/mimo-v2.5-tts-voicedesign
+    try:
+        resolved = resolve("mimo/mimo-v2.5-tts-voicedesign")
+        if resolved.is_configured:
+            return resolved.api_key, resolved.base_url
+    except Exception:
+        pass
+    raise HTTPException(400, "MiMo provider not configured. Add your MiMo API key in Settings → Providers.")
+
+
+async def _tts_synthesize(
+    api_key: str,
+    base_url: str,
+    text: str,
+    voice_prompt: str,
+    model: str = "mimo-v2.5-tts-voicedesign",
+    output_format: str = "wav",
+) -> bytes:
+    """Call the MiMo TTS API and return audio bytes.
+
+    The MiMo TTS API is OpenAI-compatible:
+    POST {base_url}/audio/speech
+    {"model": "...", "input": "text", "voice": "design_prompt"}
+
+    Returns raw audio bytes (WAV/MP3).
+    """
+    url = f"{base_url.rstrip('/')}/audio/speech"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "input": text,
+        "voice": voice_prompt,
+        "response_format": output_format,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        return resp.content
+
+
+def _estimate_tts_tokens(text: str) -> int:
+    """Estimate token count for TTS input (rough: 1 token ≈ 4 chars)."""
+    return max(1, len(text) // 4)
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -373,11 +435,9 @@ async def audition_voice(project_id: str, character: str, voice_key: str,
                          current=Depends(auth.get_current_user)):
     """Generate an audition sample for a character/voice combination.
 
+    Calls MiMo TTS API with the voice design prompt and a sample line.
     Returns the path to the generated audio sample.
     """
-    from app.ai.openrouter import run_chat
-    from app.routers.pipeline_router import _resolve_call_model
-
     pdir = _project_dir(project_id, current["id"])
     state = _load_state(pdir)
 
@@ -386,23 +446,52 @@ async def audition_voice(project_id: str, character: str, voice_key: str,
     if not voice_def:
         raise HTTPException(404, f"Voice key '{voice_key}' not found in casting config.")
 
-    # Get a sample line for this character
-    audition_guide = pdir / "audiobook" / "voice_audition_guide.md"
-    sample_line = f"Testing voice {voice_key}."
-
-    # Use the voice design prompt to generate a TTS sample
     voice_ref = voice_def.get("voice_ref", {})
     design_prompt = voice_ref.get("value", "")
+    model = voice_def.get("model", "mimo-v2.5-tts-voicedesign")
+    base_style = voice_def.get("base_style", "")
 
-    # For now, return the voice definition for frontend playback
-    # (actual TTS integration depends on MiMo TTS API availability)
+    # Sample line for audition
+    sample_text = f"Testing voice {voice_key}. The morning came with a weight that settled into the bones."
+
+    # Resolve MiMo provider
+    api_key, base_url = _resolve_mimo_provider()
+
+    # Combine design prompt with base style for the voice parameter
+    voice_param = design_prompt
+    if base_style:
+        voice_param = f"{design_prompt} Delivery: {base_style}"
+
+    try:
+        audio_bytes = await _tts_synthesize(
+            api_key=api_key,
+            base_url=base_url,
+            text=sample_text,
+            voice_prompt=voice_param,
+            model=model,
+        )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"TTS API error: {exc.response.status_code} {exc.response.text[:200]}")
+    except httpx.RequestError as exc:
+        raise HTTPException(503, f"TTS API connection error: {exc}")
+
+    # Save audition audio
+    audition_dir = pdir / "audiobook" / "auditions"
+    audition_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = audition_dir / f"{voice_key}.wav"
+    audio_path.write_bytes(audio_bytes)
+
+    # Track token usage
+    tokens = _estimate_tts_tokens(sample_text)
+    settings_store.record_token_usage(current["id"], tokens)
+
     return {
         "character": character,
         "voice_key": voice_key,
-        "voice_definition": voice_def,
-        "design_prompt": design_prompt,
-        "sample_text": sample_line,
-        "note": "TTS sample generation requires MiMo TTS API integration.",
+        "audio_path": str(audio_path.relative_to(pdir)),
+        "sample_text": sample_text,
+        "tokens_used": tokens,
+        "model": model,
     }
 
 
@@ -440,7 +529,7 @@ async def generate_audio(project_id: str, req: GenerateRequest,
                          current=Depends(auth.get_current_user)):
     """Start audio generation for specified chapters (or all if empty).
 
-    Generates TTS audio per segment, runs QA after each chapter.
+    Generates TTS audio per segment using MiMo TTS API, tracks token usage.
     """
     pdir = _project_dir(project_id, current["id"])
     state = _load_state(pdir)
@@ -451,6 +540,16 @@ async def generate_audio(project_id: str, req: GenerateRequest,
     chapter_ids = req.chapter_ids or [ch["id"] for ch in state["chapters"]]
     audio_dir = _audio_dir(pdir)
     audio_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve MiMo provider once
+    try:
+        api_key, base_url = _resolve_mimo_provider()
+    except HTTPException:
+        raise
+
+    casting = state.get("casting", {})
+    voice_lib = state.get("casting_config", {})
+    total_tokens = 0
 
     results = []
     for ch in state["chapters"]:
@@ -482,12 +581,88 @@ async def generate_audio(project_id: str, req: GenerateRequest,
             except json.JSONDecodeError:
                 continue
 
-        ch["segments"] = segments
-        ch["generation_status"] = "qa_pass"  # placeholder — real TTS integration pending
-        results.append({"chapter_id": ch["id"], "segments": len(segments), "status": "generated"})
+        # Generate audio per segment
+        ch_audio_dir = audio_dir / f"ch{ch['id']:02d}"
+        ch_audio_dir.mkdir(parents=True, exist_ok=True)
+        seg_results = []
+        chapter_tokens = 0
+
+        for i, seg in enumerate(segments):
+            seg_id = seg.get("segment_id", f"ch{ch['id']}_seg{i:03d}")
+            voice_id = seg.get("voice_id", "NARRATOR")
+            source_text = seg.get("source_text", "")
+            kind = seg.get("kind", "narration")
+
+            if kind == "direction" or not source_text.strip():
+                # Directions are pauses/ambient — skip TTS, mark as generated
+                seg["audio_path"] = ""
+                seg["generation_status"] = "skipped"
+                seg_results.append(seg)
+                continue
+
+            # Resolve voice: check casting assignment, then voice library
+            assigned_key = casting.get(voice_id, {}).get("voice_key", voice_id)
+            voice_def = voice_lib.get(assigned_key, voice_lib.get(voice_id, {}))
+            voice_prompt = voice_def.get("voice_ref", {}).get("value", "")
+            base_style = voice_def.get("base_style", "")
+            model = voice_def.get("model", "mimo-v2.5-tts-voicedesign")
+
+            if base_style:
+                voice_param = f"{voice_prompt} Delivery: {base_style}"
+            else:
+                voice_param = voice_prompt
+
+            # Synthesize
+            try:
+                audio_bytes = await _tts_synthesize(
+                    api_key=api_key,
+                    base_url=base_url,
+                    text=source_text,
+                    voice_prompt=voice_param,
+                    model=model,
+                )
+                # Save audio
+                audio_file = ch_audio_dir / f"{seg_id}.wav"
+                audio_file.write_bytes(audio_bytes)
+
+                seg["audio_path"] = str(audio_file.relative_to(pdir))
+                seg["generation_status"] = "generated"
+
+                # Track tokens
+                tokens = _estimate_tts_tokens(source_text)
+                chapter_tokens += tokens
+
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                log.error("TTS failed for segment %s: %s", seg_id, exc)
+                seg["audio_path"] = ""
+                seg["generation_status"] = "failed"
+                seg["error"] = str(exc)[:200]
+
+            seg_results.append(seg)
+
+        # Update chapter state
+        ch["segments"] = seg_results
+        failed_count = sum(1 for s in seg_results if s.get("generation_status") == "failed")
+        if failed_count > 0:
+            ch["generation_status"] = "qa_fail"
+        else:
+            ch["generation_status"] = "qa_pass"
+
+        total_tokens += chapter_tokens
+        results.append({
+            "chapter_id": ch["id"],
+            "segments": len(seg_results),
+            "generated": sum(1 for s in seg_results if s.get("generation_status") == "generated"),
+            "failed": failed_count,
+            "tokens_used": chapter_tokens,
+        })
+
+    # Record total token usage
+    if total_tokens > 0:
+        settings_store.record_token_usage(current["id"], total_tokens)
 
     _save_state(pdir, state)
-    return {"results": results}
+    return {"results": results, "total_tokens_used": total_tokens}
 
 
 @router.get("/{project_id}/segments/{chapter_id}")
