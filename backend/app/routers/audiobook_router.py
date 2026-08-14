@@ -278,14 +278,22 @@ async def generate_scripts(project_id: str, current=Depends(auth.get_current_use
     generated = 0
     errors: list[str] = []
     skipped_approved = 0
+    # Overall budget: Railway's proxy kills requests around 300s. Stop with
+    # partial results before that so the client always gets a response.
+    import time as _time
+    deadline = _time.monotonic() + 240.0
+    timed_out = False
     log.info("Audiobook generate_scripts: %d chapters, stage=%s, model=%s",
              len(state["chapters"]), state["stage"], audiobook_model)
     for ch in state["chapters"]:
-        log.info("Chapter %d: script_status=%s, source=%s",
-                 ch["id"], ch["script_status"], ch.get("source", ""))
         if ch["script_status"] == "approved":
             skipped_approved += 1
             continue  # skip approved scripts
+
+        if _time.monotonic() > deadline:
+            timed_out = True
+            log.info("Audiobook generate_scripts: deadline hit, stopping before chapter %d", ch["id"])
+            break
 
         # Read manuscript chapter
         source_path = pdir / ch["source"]
@@ -334,6 +342,7 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
                 system_prompt=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
                 temperature=0.3,
+                timeout=120.0,
             )
         except Exception as exc:
             log.error("Script generation failed for chapter %d: %s", ch["id"], exc)
@@ -349,13 +358,14 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
         generated += 1
 
     _save_state(pdir, state)
-    log.info("Audiobook generate_scripts result: generated=%d, errors=%d, skipped_approved=%d, total=%d",
-             generated, len(errors), skipped_approved, len(state["chapters"]))
+    log.info("Audiobook generate_scripts result: generated=%d, errors=%d, skipped_approved=%d, total=%d, timed_out=%s",
+             generated, len(errors), skipped_approved, len(state["chapters"]), timed_out)
     return {
         "generated": generated,
         "errors": errors,
         "skipped_approved": skipped_approved,
         "total_chapters": len(state["chapters"]),
+        "timed_out": timed_out,
     }
 
 

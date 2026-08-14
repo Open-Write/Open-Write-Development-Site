@@ -155,7 +155,7 @@ function ScriptStage({ projectId, state, onChange }: { projectId: string; state:
     setBusy(true); setError(""); setGeneratedCount(null);
     try {
       const res = await api.post(`/audiobook/${projectId}/script/generate`, {}) as {
-        generated: number; errors?: string[]; skipped_approved?: number;
+        generated: number; errors?: string[]; skipped_approved?: number; timed_out?: boolean;
       };
       await onChange();
       if (res.errors && res.errors.length > 0) {
@@ -166,6 +166,9 @@ function ScriptStage({ projectId, state, onChange }: { projectId: string; state:
         setError("No scripts were generated. Check that you have manuscript chapters and a model configured in Settings → Model Routing → Audiobook.");
       } else {
         setGeneratedCount(res.generated);
+      }
+      if (res.timed_out) {
+        setError((prev) => (prev ? `${prev} ` : "") + "Timed out partway — click Generate again to continue remaining chapters.");
       }
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
