@@ -147,7 +147,10 @@ app.include_router(help_router.router)
 def _serve_file(path: Path, media_type: str | None = None) -> FileResponse | HTMLResponse:
     """Serve a file if it exists, otherwise return a 404 with diagnostic info."""
     if path.is_file():
-        return FileResponse(path, media_type=media_type or _mime_for(path))
+        headers = {}
+        if path.suffix == ".html":
+            headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return FileResponse(path, media_type=media_type or _mime_for(path), headers=headers)
     return HTMLResponse(
         f"<h1>File not found</h1><p>Expected at: {path}</p>"
         f"<p>Exists: {path.exists()}</p>"
@@ -166,7 +169,12 @@ async def studio_root():
 async def studio_spa(full_path: str):
     candidate = _FRONTEND_DIST / full_path
     if candidate.is_file():
-        return FileResponse(candidate, media_type=_mime_for(candidate))
+        # Hash-based filenames (.js, .css) can be cached aggressively;
+        # HTML files must never be cached so the browser picks up new bundles.
+        headers = {}
+        if candidate.suffix == ".html":
+            headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return FileResponse(candidate, media_type=_mime_for(candidate), headers=headers)
     return _serve_file(_FRONTEND_DIST / "index.html", "text/html")
 
 
