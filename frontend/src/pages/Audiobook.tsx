@@ -59,6 +59,22 @@ export default function Audiobook() {
     finally { setBusy(false); }
   };
 
+  const resetAudiobook = async () => {
+    if (!projectId) return;
+    if (!confirm("Reset the audiobook pipeline? This will delete all scripts, casting, and generated audio.")) return;
+    setBusy(true); setError("");
+    try {
+      await fetch(`${import.meta.env.VITE_API_BASE || "/api"}/audiobook/${projectId}/state`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("ow_token") || ""}`,
+        },
+      });
+      setState(null);
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
   if (loading) return <Layout><div className="text-gray-500">Loading…</div></Layout>;
 
   if (!state) {
@@ -87,9 +103,14 @@ export default function Audiobook() {
             Stage: <span className="font-medium text-accent">{state.stage}</span>
           </p>
         </div>
-        <Link to={`/project/${projectId}`} className="btn-ghost text-xs">
-          ← Back to project
-        </Link>
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost text-xs text-red-400 hover:text-red-300" onClick={resetAudiobook} disabled={busy}>
+            Reset
+          </button>
+          <Link to={`/project/${projectId}`} className="btn-ghost text-xs">
+            ← Back to project
+          </Link>
+        </div>
       </div>
 
       {/* Stage navigation */}

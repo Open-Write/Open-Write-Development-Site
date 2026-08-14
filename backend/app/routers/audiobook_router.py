@@ -858,3 +858,14 @@ async def advance_stage(project_id: str, current=Depends(auth.get_current_user))
 
     _save_state(pdir, state)
     return {"stage": state["stage"]}
+
+
+@router.delete("/{project_id}/state")
+async def reset_audiobook(project_id: str, current=Depends(auth.get_current_user)):
+    """Delete the audiobook state so the pipeline can be re-initialized."""
+    import os
+    pdir = _project_dir(project_id, current["id"])
+    sp = _state_path(pdir)
+    if sp.exists():
+        os.remove(sp)
+    return {"reset": True}
