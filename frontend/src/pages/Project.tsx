@@ -592,7 +592,6 @@ function RevisionPanel({
   unitLabel: string;
   onStartRevision: (chapters: number[], notes: string) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState<Record<string, unknown> | null>(null);
@@ -601,9 +600,19 @@ function RevisionPanel({
   const [adjustments, setAdjustments] = useState("");
   const [showAdjustments, setShowAdjustments] = useState(false);
   const [error, setError] = useState("");
+  const [loadingAdversarial, setLoadingAdversarial] = useState(false);
 
-  const toggle = (ch: number) => {
-    setSelected((prev) => (prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]));
+  const loadAdversarialNotes = async () => {
+    setLoadingAdversarial(true); setError("");
+    try {
+      const data = await api.getOutputFile(projectId, "coverage_reports/adversarial_read.md");
+      if (data.content) {
+        setNotes(data.content);
+      } else {
+        setError("No adversarial read found. Run a pipeline first.");
+      }
+    } catch (e) { setError((e as Error).message); }
+    finally { setLoadingAdversarial(false); }
   };
 
   const generatePlan = async () => {
@@ -621,8 +630,8 @@ function RevisionPanel({
     try {
       await api.approveRevisionPlan(projectId, { approved: true });
       setPlanApproved(true);
-      // Now start the actual revision
-      await onStartRevision(selected, notes);
+      // Start revision with all units — the plan determines which chapters to revise
+      await onStartRevision(units, notes);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -657,56 +666,46 @@ function RevisionPanel({
 
   return (
     <div className="card mt-6 border border-accent/20 bg-accent/5 p-5">
-      <h3 className="mb-4 text-lg font-semibold text-gray-100">Revise project {unitLabel}s</h3>
+      <h3 className="mb-4 text-lg font-semibold text-gray-100">Revise project</h3>
 
-      {/* Step 1: Select chapters and enter feedback */}
+      {/* Step 1: Enter feedback */}
       {!plan && !planApproved && (
         <>
-          <div className="mb-6 space-y-3">
-            {units.map((ch) => {
-              const report = editorialReports.find((r) => r.chapter === ch);
-              return (
-                <div key={ch} className="flex flex-col border-b border-edge/50 pb-3">
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(ch)}
-                      onChange={() => toggle(ch)}
-                    />
-                    <span className="text-sm font-medium text-gray-200">{unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1)} {ch}</span>
-                  </label>
-                  {report?.content && (
-                    <div className="mt-2 pl-7 text-xs italic text-gray-400">
-                      {report.content.substring(0, 300)}…
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-xs text-gray-400">Revision instructions (your feedback)</label>
+              <label className="mb-1 block text-xs text-gray-400">Revision feedback</label>
               <textarea
-                className="input h-24 resize-y text-sm"
-                placeholder={`What should be changed in these ${unitLabel}s? Paste your adversarial read feedback here.`}
+                className="input h-32 resize-y text-sm"
+                placeholder={`Describe what needs to change. The Evaluator will determine which ${unitLabel}s to revise and create a plan.\n\nOr load the adversarial read notes below.`}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
               />
             </div>
 
+            <button
+              className="btn-ghost w-full text-xs"
+              onClick={loadAdversarialNotes}
+              disabled={loadingAdversarial}
+            >
+              {loadingAdversarial ? "Loading adversarial read…" : "Use adversarial read notes as feedback"}
+            </button>
+
             {error && <p className="text-xs text-red-400">{error}</p>}
 
             <button
               className="btn-primary w-full"
-              disabled={generatingPlan || selected.length === 0 || !notes.trim() || autoRunning}
+              disabled={generatingPlan || !notes.trim() || autoRunning}
               onClick={generatePlan}
             >
               {generatingPlan
                 ? "Evaluator analyzing feedback…"
-                : `Generate revision plan for ${selected.length} ${selected.length === 1 ? unitLabel : unitLabel + "s"}`}
+                : "Generate revision plan"}
             </button>
+
+            <p className="text-xs text-gray-500">
+              The Evaluator will analyze your feedback and determine which {unitLabel}s need revision,
+              what structural changes are needed, and in what order.
+            </p>
           </div>
         </>
       )}
