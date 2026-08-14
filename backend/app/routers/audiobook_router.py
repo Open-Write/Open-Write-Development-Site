@@ -274,8 +274,14 @@ async def generate_scripts(project_id: str, current=Depends(auth.get_current_use
 
     generated = 0
     errors: list[str] = []
+    skipped_approved = 0
+    log.info("Audiobook generate_scripts: %d chapters, stage=%s, model=%s",
+             len(state["chapters"]), state["stage"], audiobook_model)
     for ch in state["chapters"]:
+        log.info("Chapter %d: script_status=%s, source=%s",
+                 ch["id"], ch["script_status"], ch.get("source", ""))
         if ch["script_status"] == "approved":
+            skipped_approved += 1
             continue  # skip approved scripts
 
         # Read manuscript chapter
@@ -340,7 +346,9 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
         generated += 1
 
     _save_state(pdir, state)
-    return {"generated": generated, "errors": errors}
+    log.info("Audiobook generate_scripts result: generated=%d, errors=%d, skipped_approved=%d",
+             generated, len(errors), skipped_approved)
+    return {"generated": generated, "errors": errors, "skipped_approved": skipped_approved}
 
 
 @router.get("/{project_id}/script/{chapter_id}")

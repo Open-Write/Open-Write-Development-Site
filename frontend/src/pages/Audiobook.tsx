@@ -133,15 +133,18 @@ function ScriptStage({ projectId, state, onChange }: { projectId: string; state:
   const generateScripts = async () => {
     setBusy(true); setError(""); setGeneratedCount(null);
     try {
-      const res = await api.post(`/audiobook/${projectId}/script/generate`, {}) as { generated: number; errors?: string[] };
+      const res = await api.post(`/audiobook/${projectId}/script/generate`, {}) as {
+        generated: number; errors?: string[]; skipped_approved?: number;
+      };
       await onChange();
-      if (res.generated === 0) {
-        setError("No scripts were generated. Check that you have manuscript chapters and a model configured in Settings → Model routing.");
-      } else {
-        setGeneratedCount(res.generated);
-      }
       if (res.errors && res.errors.length > 0) {
         setError(res.errors.join("; "));
+      } else if (res.generated === 0 && (res.skipped_approved ?? 0) > 0) {
+        setError(`All ${res.skipped_approved} chapter(s) already have approved scripts. Reset the pipeline to regenerate.`);
+      } else if (res.generated === 0) {
+        setError("No scripts were generated. Check that you have manuscript chapters and a model configured in Settings → Model Routing → Audiobook.");
+      } else {
+        setGeneratedCount(res.generated);
       }
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
