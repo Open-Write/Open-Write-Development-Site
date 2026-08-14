@@ -45,9 +45,14 @@ CREATE TABLE IF NOT EXISTS projects (
     description TEXT,
     format      TEXT DEFAULT 'novel',
     source_path TEXT,
-    created_at  TIMESTAMPTZ DEFAULT now(),
-    updated_at  TIMESTAMPTZ DEFAULT now()
+    created_at  TIMESTAMPTZ DEFAULT now()
 );
+
+-- Add source_path to existing projects tables (idempotent).
+DO $$ BEGIN
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS source_path TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 -- ── User Settings ─────────────────────────────────────────────────────────────
 -- Stores per-user JSON config (API keys, model routing, defaults).

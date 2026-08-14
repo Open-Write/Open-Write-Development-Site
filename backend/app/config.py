@@ -47,13 +47,17 @@ def project_path(user_id: str, project_id: str) -> Path:
     applies.
     """
     # Avoid circular import — db is imported later.
-    from app import db
-    row = db.query_one(
-        "SELECT source_path FROM projects WHERE id = %s AND user_id = %s",
-        (project_id, user_id),
-    )
-    if row and row.get("source_path"):
-        sp = Path(row["source_path"])
-        if sp.is_dir():
-            return sp
+    try:
+        from app import db
+        row = db.query_one(
+            "SELECT source_path FROM projects WHERE id = %s AND user_id = %s",
+            (project_id, user_id),
+        )
+        if row and row.get("source_path"):
+            sp = Path(row["source_path"])
+            if sp.is_dir():
+                return sp
+    except Exception:
+        # Column may not exist yet (before migration) or DB unavailable.
+        pass
     return user_projects_dir(user_id) / str(project_id)
