@@ -118,6 +118,13 @@ export default function Project() {
           >
             Open in Studio
           </Link>
+          <Link
+            to={`/audiobook/${id}`}
+            className="btn-ghost !py-1.5 text-xs"
+            title="Generate an audiobook from this project"
+          >
+            Audiobook
+          </Link>
         </div>
         {project?.description && <p className="mt-1 text-sm text-gray-500">{project.description}</p>}
       </div>

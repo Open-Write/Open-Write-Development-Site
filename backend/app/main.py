@@ -41,6 +41,7 @@ from app import db
 from app.config import CORS_ORIGINS
 from app.routers import (
     admin_router,
+    audiobook_router,
     auth_router,
     editorial_router,
     file_browser_router,
@@ -131,6 +132,7 @@ async def api_health_check():
 
 # ── API routes (mounted first so they take priority) ──────────────────────
 app.include_router(admin_router.router)
+app.include_router(audiobook_router.router)
 app.include_router(auth_router.router)
 app.include_router(editorial_router.router)
 app.include_router(file_browser_router.router)

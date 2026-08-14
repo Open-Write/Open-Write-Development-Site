@@ -8,6 +8,7 @@ import Studio from "./pages/Studio";
 import Settings from "./pages/Settings";
 import Admin from "./pages/Admin";
 import EditorialReview from "./pages/EditorialReview";
+import Audiobook from "./pages/Audiobook";
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/settings" element={<AuthGuard><Settings /></AuthGuard>} />
           <Route path="/admin" element={<AuthGuard><Admin /></AuthGuard>} />
           <Route path="/editorial" element={<AuthGuard><EditorialReview /></AuthGuard>} />
+          <Route path="/audiobook/:id" element={<AuthGuard><Audiobook /></AuthGuard>} />
           <Route path="*" element={<AuthGuard><Dashboard /></AuthGuard>} />
         </Routes>
       </AuthProvider>

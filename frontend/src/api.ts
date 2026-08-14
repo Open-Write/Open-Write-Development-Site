@@ -429,4 +429,8 @@ export const api = {
   removeApprovedEmail: (email: string) =>
     request<{ deleted: string }>(
       `/admin/approved-emails/${encodeURIComponent(email)}`, { method: "DELETE" }),
+
+  // Audiobook pipeline
+  get: (path: string) => request<unknown>(path),
+  post: (path: string, body?: unknown) => request<unknown>(path, { method: "POST", body }),
 };

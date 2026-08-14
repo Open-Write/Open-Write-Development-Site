@@ -1,0 +1,568 @@
+{
+  "version": 1,
+  "project": "GOPC: Part One — The Anticlimax",
+  "defaults": {
+    "format": "wav",
+    "max_segment_chars": 1200,
+    "style_source": "palette_state",
+    "dialogue_mode": "full_cast"
+  },
+  "normalization": {
+    "strip_footnote_markers": true,
+    "strip_chapter_heading": true,
+    "chapter_title_template": "Chapter {number}. {title}.",
+    "render_chapter_title_as_segment": true,
+    "scene_break_action": "pause",
+    "pass_through": ["em_dash", "ellipsis", "curly_quotes", "numbers", "dates"]
+  },
+  "voices": {
+    "NARRATOR": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Neutral American male narrator, mid-range, warm but restrained. Close-third literary delivery: the narrator knows what the POV character knows and nothing more. Period-appropriate but not theatrical. The voice of a historian who was there."
+      },
+      "base_style": "Spare, body-anchored. Pause where the prose pauses. No performance; let the physical detail do the work."
+    },
+    "JOHN_BROWN_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-fifties, New England origins transplanted to Kansas frontier. Deep, resonant, deliberate. The cadence of King James Scripture is in every sentence — not performed, but absorbed through decades of reading aloud at the supper table. Dry humor surfaces unexpectedly. Voice drops when pressurized rather than rising. The authority of a man who believes God is listening."
+      },
+      "base_style": "Measured, prophetic. Each sentence arrives with weight. Let the Scripture cadence breathe without theatricality."
+    },
+    "JOHN_BROWN_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-fifties, weathered frontier voice. Lower, rougher, more worn than a preacher's. The voice of a man who has worked land, buried children, and planned raids. Plain American speech with occasional biblical inflection breaking through. Controlled — the stillness is discipline, not calm. When he prays, the voice changes register entirely."
+      },
+      "base_style": "Low, controlled, frontier-plain. The discipline is audible. Biblical register only in prayer."
+    },
+    "JOHN_BROWN_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-fifties, American. Quiet intensity. The voice of a man who has been still for a long time and is now moving. Not loud — the opposite of loud. Consonants are precise. Vowels are short. When he reads Scripture aloud, the room changes temperature. Dry humor arrives deadpan. The warmth is in what he does not say."
+      },
+      "base_style": "Quiet, precise, intense. The warmth is underneath. Let silence carry weight between sentences."
+    },
+    "OWEN_BROWN_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early thirties, restless energy. Slightly rough, impatient. The voice of a man whose body wants to move before his mouth finishes the sentence. Short clauses. Rising energy that his father's presence forces back down. Not angry — urgent. The youngest energy in a family of still men."
+      },
+      "base_style": "Forward, impatient, checked. The urgency is physical. Let the restraint show — he wants to say more."
+    },
+    "OWEN_BROWN_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early thirties, Kansas frontier. Quieter than expected — a man who has learned that his father's stillness is not the same as his own. Medium register, slightly rough. Sentences trail off when he realizes no one is listening. The voice of a son who wants to be seen and has learned to stand in doorways instead."
+      },
+      "base_style": "Quiet, trailing, slightly rough. The wanting is underneath. Let the unfinished sentences land."
+    },
+    "OWEN_BROWN_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early thirties, practical frontier voice. Direct, plain, no Scripture and no speeches. The voice of a man who loads wagons and sharpens knives — the quiet work. When he speaks, it is to name something specific. The restlessness is in the pauses, not the words."
+      },
+      "base_style": "Plain, specific, practical. The restlessness is in the silence between sentences."
+    },
+    "FRED_BROWN_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-twenties, quiet and precise. Low volume, few words. The voice of a man who watches more than he speaks. When he does speak, the words are chosen — each one placed. The stillness is attention, not discipline. Slightly below mid-range. Others register him before he says anything."
+      },
+      "base_style": "Quiet, precise, minimal. Each word is a choice. Let the silence between words carry the danger."
+    },
+    "FRED_BROWN_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-twenties, barely there. The voice recedes even as it speaks. Low, flat, almost affectless — but the precision of word choice reveals intelligence. The voice of a man who has decided that most speech is waste. When he reads Bible aloud, the voice is unexpectedly good — warm, clear, present. The contrast is the character."
+      },
+      "base_style": "Flat, recessive, precise. The Bible-reading voice is different — warmer, fuller. Let the contrast exist."
+    },
+    "FRED_BROWN_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-twenties, controlled and watchful. Mid-low register. Economy of expression — no metaphor, no decoration. Sentences end decisively. The voice of the most capable person in any room, who has learned that capability is better demonstrated than described. Physical presence translates to vocal weight."
+      },
+      "base_style": "Controlled, decisive, economical. The capability is in the certainty of delivery."
+    },
+    "JB_JR_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, clear and projecting. Institutional voice — the voice of a man who speaks to rooms, to conventions, to legislatures. Complete sentences, formal syntax, governance vocabulary. Different instrument from his father: designed for process, not prophecy. Under stress: more formal, not less. The Inherited Manager at full capacity."
+      },
+      "base_style": "Clear, institutional, commanding. Complete sentences. The formality is the character."
+    },
+    "JB_JR_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, articulate and careful. The voice of a man who has taught himself to fill space with reasoned argument. Angular delivery — each clause a building block. Father's intensity in a younger, more structured frame. The institutional confidence is real but brittle — it cracks under pressure rather than bending."
+      },
+      "base_style": "Articulate, structured, brittle. The confidence is real; so is the crack underneath."
+    },
+    "JB_JR_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, educated mid-19th century American. The voice of Topeka convention speeches — projecting, modulated, measured. Formal even when exhausted. The weight of responsibility in every sentence. Father reads Prophets; son reads constitutions. The governance register is natural, not performed."
+      },
+      "base_style": "Measured, formal, weight-bearing. The responsibility is in the cadence."
+    },
+    "SAMUEL_ADAIR_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, warm and measured. Minister's steady cadence — not revival thundering but the quiet authority of a man who believes words have weight. Theological syntax: complete sentences, clauses that build. Quotes Gospels (Matthew, Sermon on the Mount) not Prophets. Never raises voice. When troubled: sentences get longer, more clauses, as if more words can hold the crisis."
+      },
+      "base_style": "Warm, steady, theological. The cadence of a man who believes in peace and is watching it become impossible."
+    },
+    "SAMUEL_ADAIR_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, scholarly and gentle. The voice of a frontier minister who carries his Bible like a tool. Measured, patient, diplomatic. Tilts head when listening. The warmth is genuine — not performed piety. When he prays, the voice is private, conversational, as if talking to someone in the room. Kansas wind in the background of every sentence."
+      },
+      "base_style": "Gentle, measured, genuine. The peace is real; the watching is painful."
+    },
+    "SAMUEL_ADAIR_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, plain and principled. Less ornate than a typical minister — frontier theology strips the decoration. Direct, clear, unflinching. The voice of a man who has decided what he believes and is watching his father-in-law decide differently. When troubled: voice goes flat, theological ornament drops away, bare sentences remain."
+      },
+      "base_style": "Plain, principled, unflinching. The theological weight is in the restraint, not the rhetoric."
+    },
+    "MORSE_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, steady commercial voice. The authority of a man who stands behind a counter and counts. Measured, practical, complete sentences when selling, shorter when worried. Repeats customer's words back — buying time to calculate. Voice stays level even when afraid; the pauses get longer. The community anchor."
+      },
+      "base_style": "Steady, commercial, authoritative. The pause is the emphasis. The counting is the thinking."
+    },
+    "MORSE_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, Kansas shopkeeper. Quiet authority — not loud, not soft. The voice of a man who sees everything from behind a counter and says less than he knows. Practical, grounded, with a slight deliberateness that comes from years of calculating change. When the news matters, the voice doesn't change — the hands go still."
+      },
+      "base_style": "Quiet, observant, deliberate. The stillness of the hands is the information."
+    },
+    "MORSE_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, frontier merchant. Warm but guarded — the voice of a man who sells to both sides and trusts neither fully. Mid-range, steady, with a commercial rhythm: listing, calculating, concluding. The Doubt surfaces in longer pauses, not in word choice. The store is the community's intelligence hub; the voice reflects that — always listening."
+      },
+      "base_style": "Warm, guarded, commercial. Always listening. The intelligence is in what he does not repeat."
+    },
+    "DR_GILL_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early fifties, Virginian cadence not Kansased out. Low, clinical, measured. Complete sentences for diagnosis, fragments when working — 'Hold still,' 'Breathe,' 'This will hurt.' Doctor's habit of asking questions he knows answers to. Never raises voice. Dry humor in worst moments: 'Well, he'll need a shorter pair of trousers.' The quieter he gets, the more attention required."
+      },
+      "base_style": "Low, clinical, Virginian. Dry humor as survival instrument. Warm underneath the clinical."
+    },
+    "DR_GILL_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early fifties, Southern-accented physician. Gentle hands in the voice — the bedside manner is genuine, not performed. Measured, unhurried, with an almost musical quality to the diagnostic cadence. When troubled: voice drops to near-whisper. The neutrality is a choice, not indifference. Watches the road from his window after every patient leaves."
+      },
+      "base_style": "Gentle, measured, musical. The neutrality is deliberate. Let the dry humor arrive deadpan."
+    },
+    "DR_GILL_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early fifties, frontier doctor. Rougher than a city physician — the voice has been worn by Kansas wind and long rides. Low, practical, with a Virginian undertone that surfaces in formal moments. Economy of instruction: 'Six stitches. Come back in a week.' The clinical distance is the tool; the warmth is in what he does after the diagnosis."
+      },
+      "base_style": "Rough, practical, low. The clinical distance is the instrument. Warmth in action, not tone."
+    },
+    "HENRY_SHERMAN_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early forties, German immigrant. Accented English — Germanic syntax occasionally (verb at end of clause). Plain, practical, no speeches. The voice of a man who thinks in German first and translates. Short-to-medium sentences. Quiet. Lutheran prayers — undemonstrative, weekly. Reads paper at supper. Haunted after loss — voice goes flat."
+      },
+      "base_style": "Accented, practical, functional. The German underneath shapes the English. Let the grief surface in flatness."
+    },
+    "HENRY_SHERMAN_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early forties, German-born Kansas farmer. Steady, working voice — the rhythm of someone who rises before dawn and works until dark. Accented but clear. Says what he means, stops. No hedging, no ornament. The voice of a man who has made a life in a language that is not his first, and has made it work."
+      },
+      "base_style": "Steady, working, accented. Plain speech. The immigrant's precision."
+    },
+    "HENRY_SHERMAN_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early forties, German-American. Deeper, more reserved. The accent is present but worn smooth by decades of Kansas English. Economical — every sentence does work. When discussing politics: careful, measured. When speaking German with Katarina: warmer, quicker, more natural. The bilingual shift is the character's interior."
+      },
+      "base_style": "Reserved, economical, bilingual shift. German warmth, English caution."
+    },
+    "KATARINA_SHERMAN_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late thirties, German immigrant. Accented English, sharp, direct. Does not hedge. Names what Henry won't. German for important things — grace at supper, warnings, prayers. Dry observational sharpness: 'You don't believe that.' Authority of a woman who has opinions and expresses them inside her walls. Sets plates down with weight."
+      },
+      "base_style": "Sharp, direct, accented. The authority is domestic and absolute. German for the weight."
+    },
+    "KATARINA_SHERMAN_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late thirties, German-born. Warmer than sharp — but the warmth does not soften the directness. Accented, practical, with a low laugh that surfaces at unexpected moments. The voice of a woman who reads the German-language paper, knows which neighbors have packed wagons at night, and says so. Grace in German; facts in English."
+      },
+      "base_style": "Warm, direct, practical. The knowing is in the delivery. German for prayer and warning."
+    },
+    "KATARINA_SHERMAN_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late thirties, Kansas frontier wife. Lower register than expected. Accented, deliberate, with weight in every sentence. The voice of a woman who has buried the idea that this will end well and is still setting the table. Clears table to end conversations. When she says 'It will pass' — she knows it won't, and says it anyway."
+      },
+      "base_style": "Low, deliberate, weighted. The prescience is in the certainty. Let the German surface for emphasis."
+    },
+    "RUTH_ADAIR_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, mid-twenties, father's directness without scriptural cadence. Plain, complete sentences, short, practical. 'Supper's at six.' Dry observation surfaces sometimes. Lower register than expected. Quiet authority. The bridge between Brown and Adair households — carries her father's face and her husband's theology."
+      },
+      "base_style": "Clear, direct, practical. The bridge is in the voice — Brown's steel, Adair's patience."
+    },
+    "RUTH_ADAIR_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, mid-twenties, frontier minister's wife. Warm but not soft — the efficiency of a woman who runs a household on a creek in Kansas Territory. Father's jaw, husband's theology, her own voice. When afraid: silent, works instead. Touches doorframes. The voice of competence under constraint."
+      },
+      "base_style": "Warm, efficient, competent. The fear is in the silence, not the voice."
+    },
+    "RUTH_ADAIR_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, mid-twenties, Kansas. Quieter, more internal. The voice of a woman who stands on porches watching roads. Mid-range, measured, with pauses that contain the things she will not say. When she speaks, it is to name what others avoid. The doorframe touch is the voice's physical equivalent — grounding, present, holding."
+      },
+      "base_style": "Quiet, measured, present. The pauses are the bridge. Let the watching land."
+    },
+    "MARY_BROWN_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late thirties, worn by twenty years and thirteen pregnancies. Not fragile — durable. Plain. No speeches. Fewer than ten lines in some of the most important scenes. Voice of a woman who knows and chooses not to say. Silence is her most powerful tool. When she does speak: weight of everything unsaid."
+      },
+      "base_style": "Plain, precise, few words. The silence carries everything. Let the weight of unsaid things breathe."
+    },
+    "MARY_BROWN_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late thirties, frontier wife. Low, steady, with a flatness that is not affect but survival. The voice of a woman who has counted losses by moving her fingers against her skirt. Signs letters 'Your wife' — not 'your loving wife.' When she asks a question, it contains its own answer. Occupies doorways like sentry positions."
+      },
+      "base_style": "Low, flat, surviving. The questions answer themselves. Let the counting silence exist."
+    },
+    "MARY_BROWN_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late thirties, American. Quiet authority — the voice of a woman who has managed thirteen pregnancies, a husband's mission, and a frontier household without asking permission. Not bitter, not resigned — factual. The economy is earned. When she says 'Come back to me,' the three words contain the entire marriage."
+      },
+      "base_style": "Quiet, factual, earned. The economy is the authority. Three words carry everything."
+    },
+    "VINCE_ANDERSON_A": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, sixteen, quiet and mannered. Surprising vocabulary — words that don't match his work. Soft, polite, controlled. Unsettling because the courtesy is the weapon. Lower register than expected for sixteen. Every word chosen. 'I'm sorry to interrupt your evening.' Never raises voice. The politeness is the threat."
+      },
+      "base_style": "Soft, polite, controlled. The courtesy is the danger. Let the precision unsettle."
+    },
+    "VINCE_ANDERSON_B": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, sixteen, Missouri border. Barely there — the voice of a boy who has learned that invisibility is power. Quiet, precise, with a flatness that could be boredom or could be something else entirely. Polite because it works. The threat is never stated; it lives in the gap between the words and the voice that says them."
+      },
+      "base_style": "Flat, precise, invisible. The gap between word and delivery is the weapon."
+    },
+    "VINCE_ANDERSON_C": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, sixteen, controlled. The voice of a boy performing adulthood. Measured, deliberate, with a formality that is slightly too polished — rehearsed. Apologizes when he kills people. Connection with dogs — warmer with animals than with people. The Manager failing underneath produces generic, cold violence."
+      },
+      "base_style": "Rehearsed, formal, cold underneath. The performance of politeness. Dogs get the warmth."
+    },
+    "SARA_ROBINSON": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, late twenties, educated Eastern bearing. Most verbally articulate woman in settler POV. Complete sentences, precise. Names things. 'The institutional path requires courage you have, Charles.' Not affirming — analyzing. Reads same newspapers as husband, reaches own conclusions. Hand goes to collar when holding back thought."
+      },
+      "base_style": "Clear, precise, educated. Complete sentences. Institutional language in domestic settings. The precision is the authority."
+    },
+    "JAMES_REDPATH": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early twenties, Scots-American journalist. Youthful, earnest, curious. Spoken voice younger than written voice. Dispatches sharper and angrier than his face. Learning the country as he writes. Asks questions. Names things precisely. The genuine moral seriousness of a young man who still believes the truth matters."
+      },
+      "base_style": "Earnest, curious, precise. The written voice is older than the spoken voice. Let the moral seriousness breathe."
+    },
+    "MAHALA_DOYLE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, early thirties, Tennessee cadence. Plain. Looks older than her age. Small, compact, rough reddened hands. Scriptural without being theological: 'The Lord provides.' 'We'll manage.' 'Supper's ready.' Voice of a woman who buried two babies and raised two boys. When grieving: voice goes flat, Tennessee cadence drops. The silence of her hands stopping is more devastating than any scream."
+      },
+      "base_style": "Tennessee, plain, practical. Flat when grieving. The hands stopping is the information."
+    },
+    "ANN_WILKINSON": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, mid-twenties, softer Tennessee cadence. Younger than Mahala, less worn. Still called pretty. Musical laugh that will not survive what is coming. Shorter sentences interrupted by toddler. 'Hold still.' 'Don't touch that.' Touches belly when standing. The laugh's absence later is the information."
+      },
+      "base_style": "Soft, young, Tennessee. Musical laugh (pre-trauma). The laugh's future absence is the long game."
+    },
+    "GW_BROWN": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, printer's voice. Measured, editorial, authoritative. Complete sentences. Occasional phrases composed before spoken. 'The situation in this territory requires the attention of every citizen.' Speaks at volume of man who knows words will be printed. Habit of pausing before key word — the editorial pause."
+      },
+      "base_style": "Measured, editorial, authoritative. The pause is the emphasis. Volume of print."
+    },
+    "CHARLES_LENHART": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, late twenties, compact, strong, farmer's build. Broken nose healed left of center. Plain. Short sentences. No speeches, no Scripture. 'They're coming.' 'I'll be there.' 'That's enough.' Farmer's vocabulary — practical, concrete. Dry observation: 'That man talks a lot for someone who's never fixed a fence.'"
+      },
+      "base_style": "Plain, short, functional. No metaphor. No decoration. The work is the voice."
+    },
+    "JOSIE_ANDERSON": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, fourteen, three registers: (1) Public — strategic blankness, polite, controlled, forgettable. 'Yes, sir.' (2) Private with Vince — short, demanding, urgent. 'Vincent.' 'Come inside.' (3) Political — opinionated, direct. 'They have no right.' 'Vincent' is the show's most loaded single word — demand, plea, claim."
+      },
+      "base_style": "Variable — public voice is blank, private voice is urgent, political voice is direct. 'Vincent' carries everything."
+    },
+    "LIZZIE_KING": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, adult, free Black woman. Brief, functional, watchful. Speaks in register of woman listening more than talking. Her stake is existential — freedom, not politics. Moves through boarding house with food and linens. Hears everything free-state men say when they think she's only serving."
+      },
+      "base_style": "Brief, controlled, observant. Quiet authority. The listening is the intelligence."
+    },
+    "CHARLES_ROBINSON": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early forties, institutional. Dresses slightly better than settlers. Deliberate, careful. Weighs words. 'I hope so.' Believes in governance register. Does not make impulsive statements. Paces when thinking. Presides over meetings. The voice of a man who believes in process — less certain than his wife."
+      },
+      "base_style": "Measured, institutional, deliberate. The process is the belief. Less certain than Sara."
+    },
+    "SHERIFF_JONES": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, thirties to forties, law enforcement. Authoritative, procedural. Legalism as armor: 'I have a warrant.' 'The law requires.' Gives instructions. Drafts warrants. Overstates threats in dispatches. When humiliated: drinks, voice gets harder, more insistent. Not insane — believes he's enforcing the law."
+      },
+      "base_style": "Authoritative, procedural. The legalism is the armor. Harder when humiliated."
+    },
+    "WILLIAM_CLARKE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, judicial. Deep, measured. Sedentary, slightly soft, judge's pallor. Cadence of last voice in room: 'The court finds.' 'The statute requires.' Does not argue — rules. When challenged: voice doesn't rise, it SLOWS. Slower = more dangerous. Sincere — that's what makes him dangerous. Never raises voice."
+      },
+      "base_style": "Deep, measured, judicial. The slower he speaks, the more dangerous. Authority in cadence, not volume."
+    },
+    "JOHN_STRINGFELLOW": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, militant and commanding. Tall, lean, angular. Projects, modulates, pauses for effect. 'The abolitionist horde.' 'The enemies of lawful society.' Inflammatory language with surgeon's precision. In private: more direct, more dangerous. Always standing when speaking. Weight forward, chin elevated."
+      },
+      "base_style": "Carrying, commanding, incendiary. Public: calculated incitement. Private: direct, brutal."
+    },
+    "GOV_SHANNON": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, middle-aged, bureaucratic. Accommodating, slightly hollow. The voice of a man who smiles and shakes hands and does not know what to do. 'I do not know what to do.' Mid-range, pleasant, inadequate. The institutional replacement who brokers treaties because no one else will."
+      },
+      "base_style": "Pleasant, bureaucratic, inadequate. The smile is in the voice. The not-knowing is the character."
+    },
+    "HENRY_CLAY_PATE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-twenties, Virginian bearing. Formal. Expects to be listened to. Complete sentences, measured delivery. 'Gentlemen, the situation requires our attention.' Uses 'gentlemen' to establish hierarchy. Young man trying hard to sound authoritative — succeeding until tested. Sandy hair, clean-shaven, frock coat."
+      },
+      "base_style": "Formal, Virginian, commanding. The authority is rehearsed but convincing. Until it isn't."
+    },
+    "DAVID_ATCHISON": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, late forties, political authority. The voice of a man who commands 1,500 armed Missourians and holds them together through sheer presence. Gruff, direct, no ornament. Makes decisions in cold rooms. Signs treaties with a hand that does not shake. Authority that does not need to assert itself."
+      },
+      "base_style": "Gruff, direct, authoritative. The authority is fact, not performance."
+    },
+    "JAMES_DOYLE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, thirties, pro-slavery settler. Plain, satisfied, ordinary. 'The territory will be settled now.' The voice of a man who reads election results at supper and is content. Not villainous — ordinary. The ordinariness is the point. Tennessee-Kansas cadence."
+      },
+      "base_style": "Plain, satisfied, ordinary. The contentment is the dramatic irony."
+    },
+    "WILLIAM_DOYLE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, late teens, Doyle household. Cleans a rifle at the table. Quiet, practical. Young man's voice — not yet fully formed. The voice of someone who will not get the chance to finish forming."
+      },
+      "base_style": "Young, quiet, practical. The unfinished quality is the point."
+    },
+    "DRURY_DOYLE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-teens, Doyle household. Does chores. Barely there — the voice of a boy who is still mostly child. Practical, short responses. Mother's hand on his shoulder is the relationship in physical form."
+      },
+      "base_style": "Young, brief, child-adjacent. The mother's touch defines the voice."
+    },
+    "WILLIAM_SHERMAN": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early thirties, Henry's younger brother. Louder, less measured. German-accented, expressive. Uses slurs about free-state men. Fond of family. The loudness of a man who hasn't learned caution. Rougher English in public, German with Henry."
+      },
+      "base_style": "Loud, rough, expressive. The lack of caution is the character. German for family."
+    },
+    "JASON_BROWN": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early thirties, quiet and at peace. Less imposing than Fred, less angular than JB Jr. Stillness that is peace, not discipline. Prays quieter, more genuine than father. Does not interrupt. Listens. The calmest voice in the family. Brother Fred defers to — not wiser, but clear."
+      },
+      "base_style": "Quiet, clear, genuine. The calmest voice in the family. The peace is real."
+    },
+    "WATSON_BROWN": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, twenty, father's build, Mary's face. Quieter than elder brothers, more self-contained. Direct, without flourish. No Scripture quotes. 'I'll go' the way another man says 'I'll eat.' Not dramatic — settled. Holds infant son carefully."
+      },
+      "base_style": "Direct, settled, quiet certainty. The mission is fact, not argument."
+    },
+    "SALMON_BROWN": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, nineteen, watchful maturity. Face younger than eyes. Plain, practical, clipped when decisive. Language of consequence: what will happen if, what did happen when, what it cost last time. 'I'm not going.' Cold under stress. Not angry — final. The most rational voice in the room."
+      },
+      "base_style": "Plain, practical, final. The rationality is the weapon. Cold under stress."
+    },
+    "ANNIE_BROWN": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Female, twelve, child. High, young, curious. Fidgets in voice too — feet swing, chalk taps. Asks inconvenient questions: 'What does that mean?' 'Why is Mama standing there?' Repeats words without understanding. Not wise beyond years — twelve. The gap between what she notices and understands is the long game."
+      },
+      "base_style": "High, young, curious, interrupting. The gap between noticing and understanding."
+    },
+    "ANDREW_REEDER": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early forties, government official. Formal mid-19th-century bureaucratic English. Calm, methodical. Dictates letters. Does not show anger. Sets down pen. Sits back. Does not say what else he will do. The silence after the pen is set down is the information."
+      },
+      "base_style": "Formal, bureaucratic, measured. The silence is the information."
+    },
+    "STEPHEN_DOUGLAS": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, early forties, sitting senator. Institutional, confident, certain. 'It will sort itself out.' Believes in popular sovereignty as principled middle path. Under stress: emphatic, repetitive, insistent. Same thing louder. The repetition reveals desperation in the emphasis, not the words."
+      },
+      "base_style": "Confident, institutional, senatorial. The repetition under stress is the tell."
+    },
+    "HORACE_GREELEY": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, New York editor. Editorial, commanding, distant. Gives instructions. Revises headlines. Decides what to print. Under stress: decisive, clipped, controlling. Sentences shorten. The voice of a man who shapes stories from a thousand miles away."
+      },
+      "base_style": "Editorial, commanding, distant. Clipped under pressure. The distance is the character."
+    },
+    "DR_JOHN_DOY": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, Underground Railroad conductor. Warm, direct, practical. 'We are going.' 'Stay low.' 'You are safe now.' Voice has become medicine — told frightened people they're safe so many times. Plain language. No Scripture, no speeches. Instructions. Compressed under fear but never loses warmth."
+      },
+      "base_style": "Warm, direct, practical. The voice of medicine. 'You are safe now' said until it heals."
+    },
+    "JAMES_LANE": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-thirties, free-state militant. Sharp, impatient, angular. 'This is not a victory. This is a reprieve.' The voice of a man who has been waiting for a fight and is angry it didn't come. Political energy that curdles into frustration. Not patient — never patient."
+      },
+      "base_style": "Sharp, impatient, frustrated. The fight that didn't come is the anger."
+    },
+    "CHARLES_SUMNER": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, Massachusetts senator. Oratorical, commanding, literary. The voice of 'The Crime Against Kansas' — periods, balanced clauses, moral certainty. Washington distance from Kansas is in every sentence. The political weapon being built in language."
+      },
+      "base_style": "Oratorical, literary, commanding. The distance is the moral failure."
+    },
+    "ELIAS_MORSE_SR": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "voice_ref": {
+        "type": "design_prompt",
+        "value": "Male, mid-forties, Osawatomie shopkeeper. (Alias for MORSE — same character, used if chapter needs full name.)"
+      },
+      "base_style": "See MORSE."
+    }
+  },
+  "chapters": [
+    { "id": 1,  "source": "manuscript/chapters/01_five_sons.md",           "mode": "multi_voice", "narrator": "NARRATOR", "title": "Five Sons" },
+    { "id": 2,  "source": "manuscript/chapters/02_the_election.md",        "mode": "multi_voice", "narrator": "NARRATOR", "title": "The Election" },
+    { "id": 3,  "source": "manuscript/chapters/03_the_cabin.md",           "mode": "multi_voice", "narrator": "NARRATOR", "title": "The Cabin" },
+    { "id": 4,  "source": "manuscript/chapters/04_the_press.md",           "mode": "multi_voice", "narrator": "NARRATOR", "title": "The Press" },
+    { "id": 5,  "source": "manuscript/chapters/05_andrew_reeder.md",       "mode": "multi_voice", "narrator": "NARRATOR", "title": "Andrew Reeder" },
+    { "id": 6,  "source": "manuscript/chapters/06_free_state_government.md", "mode": "multi_voice", "narrator": "NARRATOR", "title": "Free-State Government" },
+    { "id": 7,  "source": "manuscript/chapters/07_wakarusa_part_one.md",   "mode": "multi_voice", "narrator": "NARRATOR", "title": "Wakarusa — Part One: The Siege" },
+    { "id": 8,  "source": "manuscript/chapters/08_wakarusa_part_two.md",   "mode": "multi_voice", "narrator": "NARRATOR", "title": "Wakarusa — Part Two: The Vigil" },
+    { "id": 9,  "source": "manuscript/chapters/09_the_treaty.md",          "mode": "multi_voice", "narrator": "NARRATOR", "title": "The Treaty" },
+    { "id": 10, "source": "manuscript/chapters/10_the_frozen_creek.md",    "mode": "multi_voice", "narrator": "NARRATOR", "title": "The Frozen Creek" }
+  ]
+}
