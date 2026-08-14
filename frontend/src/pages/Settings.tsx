@@ -100,6 +100,7 @@ export default function Settings() {
         writer_model: cfg.writer_model,
         critic_model: cfg.critic_model,
         planner_model: cfg.planner_model,
+        audiobook_model: cfg.audiobook_model,
         model_routing: routing,
       });
       setCfg(saved);
@@ -470,6 +471,85 @@ export default function Settings() {
             Basic tier: only DeepSeek-V4-Flash and MiMo-V2.5 are available. Upgrade to Pro for all models.
           </p>
         )}
+      </div>
+
+      {/* ── Section 5: Audiobook ──────────────────────────────────────────── */}
+      <div className="card mb-4 p-5">
+        <h3 className="mb-2 text-base font-semibold text-gray-100">Audiobook</h3>
+        <p className="mb-4 text-sm text-gray-500">
+          Configure the model used for audiobook script generation. The audiobook pipeline
+          converts your manuscript chapters into production scripts using an LLM, then
+          synthesizes audio using MiMo TTS.
+        </p>
+
+        <div className="mb-4 rounded-lg border border-accent-soft/30 bg-accent-soft/5 p-4">
+          <label className="mb-2 block text-sm font-medium text-gray-200">Script generation model</label>
+          <p className="mb-2 text-xs text-gray-500">
+            Only MiMo models are supported. This model converts manuscript text into
+            audio script segments with narrator directions and dialogue attribution.
+          </p>
+          <select className="input appearance-none bg-ink-850"
+            value={cfg.audiobook_model || ""}
+            onChange={(e) => setCfg({ ...cfg, audiobook_model: e.target.value })}>
+            <option value="">— use default model —</option>
+            {filteredModelOptions
+              .filter((opt) => opt.value.startsWith("mimo/"))
+              .map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+          </select>
+        </div>
+
+        {/* MiMo key source info */}
+        {(() => {
+          const mimoProvider = cfg.providers.find((p) => p.id === "mimo");
+          const hasServerKey = (cfg.server_key_providers || []).includes("mimo");
+          if (!mimoProvider) {
+            return (
+              <p className="text-xs text-amber-400">
+                MiMo provider is not configured. Add it in the Providers section above to use audiobook generation.
+              </p>
+            );
+          }
+          const keySource = mimoProvider.key_source;
+          return (
+            <div className="rounded-lg border border-edge p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <h4 className="text-sm font-medium text-gray-200">MiMo TTS key source</h4>
+                {keySource === "openwrite" && (
+                  <span className="badge bg-accent/20 text-accent">Open-Write key</span>
+                )}
+                {keySource === "user" && (
+                  <span className="badge bg-emerald-600/15 text-emerald-300">Your key</span>
+                )}
+                {keySource === "none" && (
+                  <span className="badge bg-ink-800 text-gray-500">no key</span>
+                )}
+              </div>
+              {hasServerKey && (
+                <div className="mb-3 flex items-center gap-4 text-xs">
+                  <button
+                    className={`rounded px-3 py-1.5 ${keySource !== "user" ? "bg-accent/20 text-accent" : "bg-ink-800 text-gray-500"}`}
+                    onClick={() => updateProvider("mimo", { api_key: "" })}>
+                    Use Open-Write tokens
+                  </button>
+                  <button
+                    className={`rounded px-3 py-1.5 ${keySource === "user" ? "bg-emerald-600/15 text-emerald-300" : "bg-ink-800 text-gray-500"}`}
+                    onClick={() => updateProvider("mimo", { api_key: mimoProvider.api_key || "" })}>
+                    Use your own MiMo subscription
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-gray-500">
+                {keySource === "openwrite"
+                  ? "Using Open-Write's MiMo key. Tokens are deducted from your monthly allowance."
+                  : keySource === "user"
+                  ? "Using your own MiMo API key. Usage is billed to your MiMo account."
+                  : "No MiMo API key set. Add one in the Providers section or switch to Open-Write key."}
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Section 5: Application Settings ────────────────────────────────── */}

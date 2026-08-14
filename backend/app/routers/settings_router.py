@@ -20,6 +20,7 @@ class ProvidersUpdate(BaseModel):
     writer_model: str | None = None
     critic_model: str | None = None
     planner_model: str | None = None
+    audiobook_model: str | None = None
     model_routing: dict | None = None
 
 
@@ -37,6 +38,7 @@ async def get_providers(current=Depends(auth.get_current_user)):
         "writer_model": settings.get("writer_model", ""),
         "critic_model": settings.get("critic_model", ""),
         "planner_model": settings.get("planner_model", ""),
+        "audiobook_model": settings.get("audiobook_model", ""),
         "model_routing": settings.get("model_routing", {}),
         "server_key_providers": settings_store.get_server_key_providers(),
     }
@@ -55,6 +57,8 @@ async def update_providers(req: ProvidersUpdate, current=Depends(auth.get_curren
         settings["critic_model"] = req.critic_model
     if req.planner_model is not None:
         settings["planner_model"] = req.planner_model
+    if req.audiobook_model is not None:
+        settings["audiobook_model"] = req.audiobook_model
     if req.model_routing is not None:
         settings["model_routing"] = req.model_routing
     settings_store.save_settings(settings)
@@ -64,6 +68,7 @@ async def update_providers(req: ProvidersUpdate, current=Depends(auth.get_curren
         "writer_model": settings.get("writer_model", ""),
         "critic_model": settings.get("critic_model", ""),
         "planner_model": settings.get("planner_model", ""),
+        "audiobook_model": settings.get("audiobook_model", ""),
         "model_routing": settings.get("model_routing", {}),
     }
 

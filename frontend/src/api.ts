@@ -76,7 +76,8 @@ export interface Provider {
 }
 export interface ProvidersConfig {
   providers: Provider[]; default_model: string; writer_model: string;
-  critic_model: string; planner_model: string; model_routing: Record<string, string>;
+  critic_model: string; planner_model: string; audiobook_model: string;
+  model_routing: Record<string, string>;
   server_key_providers?: string[];
 }
 export interface VersionSummary {

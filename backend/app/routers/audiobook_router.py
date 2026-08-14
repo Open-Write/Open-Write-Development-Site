@@ -260,7 +260,15 @@ async def generate_scripts(project_id: str, current=Depends(auth.get_current_use
     if state["stage"] not in ("script",):
         raise HTTPException(400, f"Cannot generate scripts in stage '{state['stage']}'.")
 
-    api_key, model_name, base_url = _resolve_call_model(None)
+    # Use the audiobook-specific model setting, falling back to default model
+    audiobook_model = settings_store.get_audiobook_model()
+    if not audiobook_model:
+        raise HTTPException(
+            400,
+            "No model is configured for audiobook generation. Go to Settings → "
+            "Model Routing and choose an Audiobook model, or set a Default model.",
+        )
+    api_key, model_name, base_url = _resolve_call_model(audiobook_model)
     scripts_dir = _scripts_dir(pdir)
     scripts_dir.mkdir(parents=True, exist_ok=True)
 

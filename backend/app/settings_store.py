@@ -67,6 +67,7 @@ DEFAULT_SETTINGS: dict = {
     "model_routing": {},
     "fallback_providers": [],
     "planner_model": "",
+    "audiobook_model": "",
     "content_mode": "general",
     "cost_tier": "standard",
     "text_only_filter": True,
@@ -270,6 +271,15 @@ def get_model_for_phase(phase: str) -> str:
 def get_planner_model() -> str:
     settings = load_settings()
     return settings.get("planner_model", "") or settings.get("default_model", DEFAULT_SETTINGS["default_model"])
+
+
+def get_audiobook_model() -> str:
+    """Return the model to use for audiobook script generation.
+
+    Falls back to the default model if no audiobook-specific model is set.
+    """
+    settings = load_settings()
+    return settings.get("audiobook_model", "") or settings.get("default_model", DEFAULT_SETTINGS["default_model"])
 
 
 def get_rollover_hour() -> int:
