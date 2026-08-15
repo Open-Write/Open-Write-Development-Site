@@ -487,6 +487,8 @@ export default function Settings() {
           <p className="mb-2 text-xs text-gray-500">
             Only MiMo models are supported. This model converts manuscript text into
             audio script segments with narrator directions and dialogue attribution.
+            Note: the token plan may not include mimo-v2.5-pro — if you get upstream
+            errors with your own key, try mimo-v2.5 or switch to Open-Write tokens.
           </p>
           <select className="input appearance-none bg-ink-850"
             value={cfg.audiobook_model || ""}

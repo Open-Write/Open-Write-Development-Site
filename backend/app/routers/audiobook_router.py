@@ -272,6 +272,7 @@ async def generate_scripts(project_id: str, current=Depends(auth.get_current_use
             "Model Routing and choose an Audiobook model, or set a Default model.",
         )
     api_key, model_name, base_url = _resolve_call_model(audiobook_model)
+    log.info("Audiobook generate_scripts using model=%s endpoint=%s", model_name, base_url)
     scripts_dir = _scripts_dir(pdir)
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -344,9 +345,18 @@ Output ONLY the JSONL, one segment per line. No preamble, no explanation."""
                 temperature=0.3,
                 timeout=120.0,
             )
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:200]
+            log.error("Script generation failed for chapter %d: HTTP %s from %s: %s",
+                      ch["id"], exc.response.status_code, base_url, body)
+            errors.append(
+                f"Chapter {ch['id']}: HTTP {exc.response.status_code} from {base_url} "
+                f"(model {model_name}): {body}"
+            )
+            continue
         except Exception as exc:
             log.error("Script generation failed for chapter %d: %s", ch["id"], exc)
-            errors.append(f"Chapter {ch['id']}: {exc}")
+            errors.append(f"Chapter {ch['id']} (model {model_name} via {base_url}): {exc}")
             continue
 
         if not reply or not reply.strip():
