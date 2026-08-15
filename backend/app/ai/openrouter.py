@@ -406,6 +406,7 @@ async def run_chat(
             ) as response:
                 response.raise_for_status()
                 chunks: list[str] = []
+                reasoning_chunks: list[str] = []
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -421,9 +422,18 @@ async def run_chat(
                         content = delta.get("content")
                         if content:
                             chunks.append(content)
+                        # Reasoning models (mimo-v2.5-pro, etc.) put output in
+                        # reasoning_content rather than content. Collect as
+                        # fallback — only used if no content chunks arrived.
+                        reasoning = delta.get("reasoning_content")
+                        if reasoning:
+                            reasoning_chunks.append(reasoning)
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
-                data = {"choices": [{"message": {"content": "".join(chunks)}}]}
+                # Prefer content chunks; fall back to reasoning-only output
+                # for models like mimo-v2.5-pro that never emit content deltas.
+                final = "".join(chunks) if chunks else "".join(reasoning_chunks)
+                data = {"choices": [{"message": {"content": final}}]}
     except httpx.TimeoutException:
         call_status = "timeout"
         raise
